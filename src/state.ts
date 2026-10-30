@@ -7,8 +7,11 @@ export const STATE_PATH = join(".proofline", "run.json");
 
 /** One successful launch. Relaunches append a new record; nothing is ever overwritten. */
 export interface LaunchRecord {
+  /** The ticket's id, or "init" for `proofline init`. */
   ticketId: string;
-  /** The ticket's type at launch. Missing from records written before types were recorded. */
+  /** Set only on the `proofline init` launch. */
+  kind?: "init";
+  /** The ticket's type at launch. Missing for init, and from records written before types were recorded. */
   type?: TicketType;
   agentId: string;
   agentUrl: string;
@@ -54,6 +57,11 @@ export async function writeState(cwd: string, state: RunState): Promise<void> {
   await rename(tmp, path);
 }
 
+/** Includes "init" when an init is recorded; no ticket can have that id, so it never causes a skip. */
 export function launchedTicketIds(state: RunState): Set<string> {
   return new Set(state.launches.map((launch) => launch.ticketId));
+}
+
+export function initLaunches(state: RunState): LaunchRecord[] {
+  return state.launches.filter((launch) => launch.kind === "init");
 }

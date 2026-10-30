@@ -11,29 +11,37 @@ import {
   resolveGitHubToken,
   runGhAuthToken,
 } from "./github.js";
-import { launchTickets, selectTickets } from "./launch.js";
+import { INIT_ID, loadInitTemplate, renderInitPrompt } from "./init.js";
+import { launchAgents, selectTickets, ticketItems } from "./launch.js";
 import { type Launcher, createCursorLauncher } from "./launcher.js";
 import { loadTemplate, renderAll, type RenderedPrompt } from "./render.js";
-import { type RunState, STATE_PATH, readState, writeState } from "./state.js";
+import { type RunState, STATE_PATH, initLaunches, readState, writeState } from "./state.js";
 import { PR_GRACE_MS, type TicketStatus, applyPrGrace, checkLaunch, latestLaunches, recordedType } from "./status.js";
 import type { ProoflineConfig, Tasks } from "./types.js";
 
 export const WATCH_INTERVAL_MS = 60_000;
 
-export const USAGE = `usage: proofline run [--dry-run] [--only <id>]... [--force] [--tasks <file>] [--config <file>]
+export const USAGE = `usage: proofline init [--dry-run] [--force] [--tasks <file>] [--config <file>]
+       proofline run [--dry-run] [--only <id>]... [--force] [--tasks <file>] [--config <file>]
        proofline status [--watch] [--tasks <file>]
 
+init     Starts one cloud agent on the tasks.yaml repo, from main, with prompts/init.md:
+         it sets the repo up (pstack, verification skills, AGENTS.md, cloud
+         environment) in one PR. Recorded in ${STATE_PATH} as "${INIT_ID}"; refuses to
+         launch a second one unless --force.
 run      Reads tasks.yaml and proofline.yaml, validates them, and starts one Cursor
          cloud agent per ticket on the tasks.yaml repo, from main. Launches are
          recorded in ${STATE_PATH}; tickets already recorded there are skipped.
-status   For each ticket's latest launch, shows the agent's state and its PR. Once
-         the PR is on GitHub, labels it, adds the prompt to its description, and
-         comments if it changes existing test files. Safe to run repeatedly.
+         Warns if no init is recorded yet.
+status   For each ticket's latest launch, and init's, shows the agent's state and its
+         PR. Once the PR is on GitHub, labels it with the ticket type, adds the
+         prompt to its description, and comments if it changes existing test files.
+         Safe to run repeatedly.
 
 options:
-  --dry-run         print each ticket's exact prompt; launch nothing, need no API key
-  --only <id>       launch just this ticket, even if it was launched before (repeatable)
-  --force           relaunch every ticket, including ones already launched
+  --dry-run         print the exact prompt(s); launch nothing, need no API key
+  --only <id>       run: launch just this ticket, even if it was launched before (repeatable)
+  --force           run: relaunch every ticket; init: launch even if one is recorded
   --watch           status: re-check every ${WATCH_INTERVAL_MS / 1000}s until no agent is running and each
                     finished one has a PR or finished ${PR_GRACE_MS / 60_000}+ min ago
   --tasks <file>    tickets file (default: tasks.yaml)
@@ -93,17 +101,25 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
     }
     return status(values.tasks ?? "tasks.yaml", values.watch ?? false, io);
   }
-  if (command !== "run") {
+  if (command !== "run" && command !== "init") {
     io.stderr(`${USAGE}\n`);
     return 2;
   }
-  if (values.watch) {
-    io.stderr(`error: --watch only applies to \`proofline status\`\n\n${USAGE}\n`);
+  const misplaced = [
+    ...(values.watch ? ["--watch only applies to `proofline status`"] : []),
+    ...(command === "init" && values.only ? ["--only only applies to `proofline run`"] : []),
+  ];
+  if (misplaced.length > 0) {
+    io.stderr(`${misplaced.map((m) => `error: ${m}\n`).join("")}\n${USAGE}\n`);
     return 2;
   }
 
   const tasksLabel = values.tasks ?? "tasks.yaml";
   const configLabel = values.config ?? "proofline.yaml";
+  if (command === "init") {
+    return init({ dryRun: values["dry-run"] ?? false, force: values.force ?? false }, tasksLabel, configLabel, io);
+  }
+
   let inputs: { tasks: Tasks; config: ProoflineConfig };
   let prompts: RenderedPrompt[];
   try {
@@ -154,6 +170,12 @@ async function launch(
     return 0;
   }
 
+  if (initLaunches(state).length === 0) {
+    io.stderr(
+      "warning: no `proofline init` launch is recorded, so agents may start without pstack, the verification skills, AGENTS.md or a set-up environment. Launching anyway; run `proofline init` to set the repo up.\n",
+    );
+  }
+
   const apiKey = await resolveApiKey(io.cwd, io.env);
   if (!apiKey) {
     io.stderr(`error: ${API_KEY_VAR} is not set in the environment or in .env.local; nothing was launched\n`);
@@ -162,7 +184,7 @@ async function launch(
 
   const model = config.model ? config.model.id : "the SDK default model";
   io.stdout(`launching ${toLaunch.length} agent(s) on ${tasks.repo} from main with ${model}\n`);
-  const outcome = await launchTickets(toLaunch, {
+  const outcome = await launchAgents(ticketItems(toLaunch), {
     repo: tasks.repo,
     model: config.model,
     state,
@@ -182,6 +204,68 @@ async function launch(
   ];
   io.stdout(summary.join(""));
   return outcome.failed.length > 0 ? 1 : 0;
+}
+
+/** Launches the one setup agent, recorded as "init". Same repo, branch, model and recording as `run`. */
+async function init(
+  flags: { dryRun: boolean; force: boolean },
+  tasksLabel: string,
+  configLabel: string,
+  io: Io,
+): Promise<number> {
+  let repo: string;
+  let config: ProoflineConfig;
+  let prompt: string;
+  try {
+    const loaded = await loadInputs(io.cwd, tasksLabel, configLabel, () => loadInitTemplate());
+    repo = loaded.tasks.repo;
+    config = loaded.config;
+    prompt = renderInitPrompt(loaded.template, repo);
+  } catch (err) {
+    return reportConfigError(err, io);
+  }
+
+  if (flags.dryRun) {
+    io.stdout(`===== ${INIT_ID} =====\n${prompt}\n`);
+    io.stderr(`\ndry run: init prompt for ${repo}; nothing was launched\n`);
+    return 0;
+  }
+
+  let state: RunState;
+  try {
+    state = await readState(io.cwd);
+  } catch (err) {
+    return reportConfigError(err, io);
+  }
+  const previous = initLaunches(state).at(-1);
+  if (previous && !flags.force) {
+    io.stderr(
+      `error: init was already launched at ${previous.launchedAt}: ${previous.agentUrl}\nnothing was launched; run \`proofline init --force\` to launch another\n`,
+    );
+    return 1;
+  }
+
+  const apiKey = await resolveApiKey(io.cwd, io.env);
+  if (!apiKey) {
+    io.stderr(`error: ${API_KEY_VAR} is not set in the environment or in .env.local; nothing was launched\n`);
+    return 1;
+  }
+
+  const model = config.model ? config.model.id : "the SDK default model";
+  io.stdout(`launching the init agent on ${repo} from main with ${model}\n`);
+  const outcome = await launchAgents([{ id: INIT_ID, kind: "init", prompt }], {
+    repo,
+    model: config.model,
+    state,
+    launcher: io.createLauncher(apiKey.key),
+    now: io.now,
+    save: (next) => writeState(io.cwd, next),
+    onLaunched: (r) => io.stdout(`  launched ${r.ticketId}: ${r.agentUrl}\n`),
+    onFailed: (id, reason) => io.stdout(`  failed   ${id}: ${reason}\n`),
+  });
+  if (outcome.failed.length > 0) return 1;
+  io.stdout(`\nrecorded in ${STATE_PATH}; follow it with \`proofline status --watch\`\n`);
+  return 0;
 }
 
 type StatusClients = { agents: AgentReader; github: GitHub };
@@ -246,7 +330,7 @@ async function status(tasksLabel: string, watch: boolean, io: Io): Promise<numbe
   }
 }
 
-/** Uses each launch's recorded type; tasks.yaml is read only if an older record lacks one. */
+/** Uses each launch's recorded type; tasks.yaml is read only if an older ticket record lacks one. */
 async function checkAll(
   state: RunState,
   tasksLabel: string,
@@ -254,7 +338,7 @@ async function checkAll(
   clients: StatusClients,
 ): Promise<TicketStatus[]> {
   const launches = latestLaunches(state);
-  const fallback = launches.some((l) => !recordedType(l))
+  const fallback = launches.some((l) => l.kind !== "init" && !recordedType(l))
     ? new Map((await loadTasks(resolve(cwd, tasksLabel), tasksLabel)).tickets.map((t) => [t.id, t.type]))
     : undefined;
   const statuses: TicketStatus[] = [];
@@ -300,11 +384,12 @@ async function loadInputs(
   cwd: string,
   tasksLabel: string,
   configLabel: string,
+  loadPromptTemplate: () => Promise<string> = loadTemplate,
 ): Promise<{ tasks: Tasks; config: ProoflineConfig; template: string }> {
   const [tasks, config, template] = await Promise.allSettled([
     loadTasks(resolve(cwd, tasksLabel), tasksLabel),
     loadConfig(resolve(cwd, configLabel), configLabel),
-    loadTemplate(),
+    loadPromptTemplate(),
   ]);
   if (tasks.status === "fulfilled" && config.status === "fulfilled" && template.status === "fulfilled") {
     return { tasks: tasks.value, config: config.value, template: template.value };

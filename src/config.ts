@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { parseDocument } from "yaml";
 import {
+  INIT_ID,
   TICKET_TYPES,
   isTicketType,
   type ModelChoice,
@@ -100,7 +101,9 @@ function validateTicket(item: unknown, index: number, label: string, problems: s
   const before = problems.length;
   unknownKeys(item, TICKET_KEYS, at, problems);
 
-  text(item, "id", at, problems);
+  if (text(item, "id", at, problems) === INIT_ID) {
+    problems.push(`${at("id")} "${INIT_ID}" is reserved for \`proofline init\`; pick another id`);
+  }
   const type = item.type;
   if (type === undefined || type === null) {
     problems.push(`${at("type")} is required`);

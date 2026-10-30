@@ -236,7 +236,8 @@ describe("API key", () => {
     const dir = await project();
     const { code, stderr, launcherCreated } = await run(["run"], dir, { env: {} });
     expect(code).toBe(1);
-    expect(stderr).toBe("error: CURSOR_API_KEY is not set in the environment or in .env.local; nothing was launched\n");
+    expect(stderr.endsWith("error: CURSOR_API_KEY is not set in the environment or in .env.local; nothing was launched\n")).toBe(true);
+    expect(stderr.split("\n").filter((line) => line.startsWith("error:"))).toHaveLength(1);
     expect(launcherCreated).toBe(false);
     await expect(readFile(join(dir, ".proofline", "run.json"), "utf8")).rejects.toThrow();
   });

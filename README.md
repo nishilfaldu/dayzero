@@ -2,12 +2,14 @@
 
 Write tickets in `tasks.yaml`; proofline starts one Cursor cloud agent per ticket, and each agent opens a PR on the target repo that carries its own evidence.
 
-So far proofline validates the config, renders each ticket's prompt, launches the agents, and tracks them to their PRs. Verifying the PRs comes later.
+So far proofline sets the target repo up for agents, validates the config, renders each ticket's prompt, launches the agents, and tracks them to their PRs. Verifying the PRs comes later.
 
 Requires Node 22.13 or later, which `@cursor/sdk` needs.
 
 ```sh
 npm install
+npm run proofline -- init --dry-run       # print the setup prompt; no API key, no network
+npm run proofline -- init                 # launch the one setup agent on the repo
 npm run proofline -- run --dry-run        # print every prompt; no API key, no network
 npm run proofline -- run                  # launch an agent for each ticket not yet launched
 npm run proofline -- status               # agent state + PR per ticket; labels and annotates PRs
@@ -16,6 +18,22 @@ npm run build && node dist/bin.js run     # same, from the build
 npm test                                  # uses a fake Cursor client; no network
 npm run smoke                             # manual: one real launch, see below
 ```
+
+## Init
+
+`proofline init` launches one cloud agent that sets the target repo up so later agents can take tickets and prove their work. It works the same way as `run`: the `tasks.yaml` repo, `main`, the `proofline.yaml` model, and `CURSOR_API_KEY`.
+
+**The prompt** is [prompts/init.md](prompts/init.md), with `{repo}` filled in; no other placeholder is allowed. It asks for one PR adding:
+- pstack, pinned
+- a verification skill and a formal verification skill
+- AGENTS.md with commands that were actually run
+- a cloud environment setup
+
+**Recording:** the launch goes in `.proofline/run.json` with `ticketId: "init"` and `kind: "init"`, and no type. `status` and `status --watch` show it as its own `init` row with type `-`. Its PR gets the prompt section but no label. `init` is reserved, so no ticket can use that id.
+
+- **`--dry-run`** prints the prompt and launches nothing.
+- **Running `init` again** refuses while an init is recorded, and names the existing agent. **`--force`** launches another one; the earlier record is kept.
+- **`run` warns, but still launches,** when no init is recorded. It doesn't warn on `--dry-run` or when there's nothing to launch.
 
 ## Launching
 
@@ -90,13 +108,14 @@ Failed, cancelled and unknown agents aren't waited on. Plain `status` never wait
 
 ## Inputs
 
-- `tasks.yaml`: `repo` plus `tickets`, each with `id`, `type`, `title`, `description` and `done`, and optionally `evidence`. Any other key is an error. `type` is one of feature, bug, concurrency, perf, migration or security.
+- `tasks.yaml`: `repo` plus `tickets`, each with `id`, `type`, `title`, `description` and `done`, and optionally `evidence`. Any other key is an error, and the id `init` is reserved. `type` is one of feature, bug, concurrency, perf, migration or security.
 - `proofline.yaml`:
   - `model` (optional): a model id such as `composer-2.5`, or `{id: grok-4.5, params: {effort: low}}`. Without it, the SDK uses your account's default model.
   - `repro.default` (required): the repro line.
   - Optional `repro.<type>` lines that override the default for that ticket type.
   - `evidence.always` (list) and `evidence.by_type` (type → list).
-- `prompts/ticket.md`: the prompt template, with `{type} {title} {description} {repro} {done} {evidence} {repo}` placeholders. `{repro}` is required.
+- `prompts/init.md`: the `proofline init` prompt; only `{repo}` is filled in.
+- `prompts/ticket.md`: the ticket prompt template, with `{type} {title} {description} {repro} {done} {evidence} {repo}` placeholders. `{repro}` is required.
 
 A ticket's `{repro}` is its type's override if there is one, otherwise `repro.default`. The shipped config overrides only `feature`, with "write the failing e2e test first." A ticket's evidence is `always` + `by_type[type]` + its own `evidence`, with duplicates removed.
 

@@ -52,17 +52,20 @@ export async function checkLaunch(
   type: TicketType | undefined,
   clients: { agents: AgentReader; github: GitHub },
 ): Promise<TicketStatus> {
+  const isInit = launch.kind === "init";
   const status: TicketStatus = {
     ticketId: launch.ticketId,
     agentId: launch.agentId,
-    type: type ?? "?",
+    type: isInit ? "-" : (type ?? "?"),
     agent: "?",
     pr: "-",
     changes: [],
     notes: [],
     problems: [],
   };
-  if (!type) status.notes.push("type unknown (not recorded at launch, and not in tasks.yaml), so no label is added");
+  if (!type && !isInit) {
+    status.notes.push("type unknown (not recorded at launch, and not in tasks.yaml), so no label is added");
+  }
 
   let snapshot: AgentSnapshot | undefined;
   try {
@@ -94,7 +97,7 @@ export async function checkLaunch(
       return status;
     }
     status.pr = `${pull.url}${pull.merged ? " (merged)" : pull.state === "closed" ? " (closed)" : ""}`;
-    await syncPull(pull, launch, type, clients.github, status);
+    await syncPull(pull, launch, isInit ? undefined : type, clients.github, status);
   } catch (err) {
     if (err instanceof GitHubAuthError) throw err;
     status.problems.push(`GitHub: ${describeError(err)}`);
@@ -220,7 +223,7 @@ export function promptSection(launch: LaunchRecord): string {
     PROMPT_START,
     "### Prompt sent by proofline",
     "",
-    `Ticket \`${launch.ticketId}\`, agent [${launch.agentId}](${launch.agentUrl}), launched ${launch.launchedAt}:`,
+    `${launch.kind === "init" ? "`proofline init`" : `Ticket \`${launch.ticketId}\``}, agent [${launch.agentId}](${launch.agentUrl}), launched ${launch.launchedAt}:`,
     "",
     `${fence}text`,
     launch.prompt,

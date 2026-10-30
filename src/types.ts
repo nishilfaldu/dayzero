@@ -2,6 +2,9 @@ export const TICKET_TYPES = ["feature", "bug", "concurrency", "perf", "migration
 
 export type TicketType = (typeof TICKET_TYPES)[number];
 
+/** The run.json id of the `proofline init` launch, and its row in `status`. Reserved: no ticket can use it. */
+export const INIT_ID = "init";
+
 export interface Ticket {
   id: string;
   type: TicketType;

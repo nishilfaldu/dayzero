@@ -1,7 +1,7 @@
 import type { Launcher } from "./launcher.js";
 import type { RenderedPrompt } from "./render.js";
 import { type LaunchRecord, type RunState, launchedTicketIds } from "./state.js";
-import type { ModelChoice } from "./types.js";
+import type { ModelChoice, TicketType } from "./types.js";
 
 export interface Selection {
   toLaunch: RenderedPrompt[];
@@ -34,12 +34,24 @@ export interface LaunchOutcome {
   failed: { ticketId: string; reason: string }[];
 }
 
+/** One agent to start: a ticket from `run`, or the `init` launch. */
+export interface LaunchItem {
+  id: string;
+  prompt: string;
+  type?: TicketType;
+  kind?: "init";
+}
+
+export function ticketItems(prompts: RenderedPrompt[]): LaunchItem[] {
+  return prompts.map(({ ticket, prompt }) => ({ id: ticket.id, type: ticket.type, prompt }));
+}
+
 /**
- * Launches tickets one at a time. A failure is reported and the rest still launch.
+ * Launches agents one at a time. A failure is reported and the rest still launch.
  * Each success is saved before the next launch starts, so an interrupted run loses nothing.
  */
-export async function launchTickets(
-  prompts: RenderedPrompt[],
+export async function launchAgents(
+  items: LaunchItem[],
   options: {
     repo: string;
     model: ModelChoice | undefined;
@@ -53,7 +65,7 @@ export async function launchTickets(
 ): Promise<LaunchOutcome> {
   const outcome: LaunchOutcome = { launched: [], failed: [] };
   let state = options.state;
-  for (const { ticket, prompt } of prompts) {
+  for (const { id, prompt, type, kind } of items) {
     let record: LaunchRecord;
     try {
       const launchedAt = options.now().toISOString();
@@ -64,8 +76,9 @@ export async function launchTickets(
         ...(options.model && { model: options.model }),
       });
       record = {
-        ticketId: ticket.id,
-        type: ticket.type,
+        ticketId: id,
+        ...(kind && { kind }),
+        ...(type && { type }),
         agentId: agent.agentId,
         agentUrl: agent.agentUrl,
         runId: agent.runId,
@@ -76,8 +89,8 @@ export async function launchTickets(
       };
     } catch (err) {
       const reason = describeError(err);
-      outcome.failed.push({ ticketId: ticket.id, reason });
-      options.onFailed?.(ticket.id, reason);
+      outcome.failed.push({ ticketId: id, reason });
+      options.onFailed?.(id, reason);
       continue;
     }
     state = { ...state, launches: [...state.launches, record] };
