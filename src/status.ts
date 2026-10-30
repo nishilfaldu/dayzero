@@ -17,6 +17,8 @@ export interface TicketStatus {
     branch: string;
     finishedAt?: Date;
   };
+  /** Set when Cursor reports the agent in error; `--watch` keeps re-checking it for a while, since Cursor can resume it. */
+  failed?: { finishedAt?: Date };
   /** What this run changed on the PR. */
   changes: string[];
   /** Things worth reading that aren't failures, e.g. the agent's error message. */
@@ -82,9 +84,10 @@ export async function checkLaunch(
   }
   status.agent = snapshot.state;
   if (snapshot.error) status.notes.push(`agent error: ${snapshot.error}`);
+  if (snapshot.state === "error") status.failed = { ...(snapshot.finishedAt && { finishedAt: snapshot.finishedAt }) };
 
   try {
-    const pull = await findPull(launch.repo, snapshot, clients.github, status);
+    const pull = await findPull(launch.repo, snapshot, clients.github, status.notes);
     if (!pull) {
       const missing = await describeMissingPull(launch.repo, snapshot, clients.github);
       status.pr = missing.pr;
@@ -109,11 +112,11 @@ export async function checkLaunch(
  * Cursor's prUrl is used only if GitHub has that PR, against this repo, from the agent's branch.
  * Otherwise look for a PR from the branch directly.
  */
-async function findPull(
+export async function findPull(
   repo: string,
   snapshot: AgentSnapshot,
   github: GitHub,
-  status: TicketStatus,
+  notes: string[],
 ): Promise<PullRequest | undefined> {
   if (snapshot.prUrl) {
     const ref = parsePullUrl(snapshot.prUrl);
@@ -121,7 +124,7 @@ async function findPull(
     const sameRepo = pull && pull.repo.toLowerCase() === repo.toLowerCase();
     const sameBranch = pull && (!snapshot.branch || pull.headRef === snapshot.branch);
     if (pull && sameRepo && sameBranch) return pull;
-    status.notes.push(
+    notes.push(
       pull
         ? `Cursor's PR link ${snapshot.prUrl} is for ${pull.repo} branch ${pull.headRef}, not ${repo}${snapshot.branch ? ` branch ${snapshot.branch}` : ""}; ignored`
         : `Cursor's PR link ${snapshot.prUrl} doesn't exist on GitHub; ignored`,
@@ -173,6 +176,33 @@ export function applyPrGrace(statuses: TicketStatus[], now: Date, firstSeenFinis
       pending.push(status.ticketId);
     } else {
       status.pr = `finished without a PR (${finished.branch})`;
+    }
+  }
+  return pending;
+}
+
+/** How long `--watch` keeps re-checking an agent Cursor reports in error. */
+export const ERROR_GRACE_MS = 10 * 60_000;
+
+/**
+ * For `--watch`: Cursor sometimes reports a run in error and then carries on with it, so an agent in error
+ * stays pending until ERROR_GRACE_MS after it failed. Notes the wait on those rows and returns their ticket ids.
+ * `firstSeenFailed` stands in for the failure time when Cursor doesn't report one, like `firstSeenFinished`;
+ * an agent that leaves the error state is dropped from it, so a later failure starts a fresh wait.
+ */
+export function applyErrorGrace(statuses: TicketStatus[], now: Date, firstSeenFailed: Map<string, number>): string[] {
+  const pending: string[] = [];
+  for (const status of statuses) {
+    if (!status.failed) {
+      firstSeenFailed.delete(status.agentId);
+      continue;
+    }
+    if (!firstSeenFailed.has(status.agentId)) firstSeenFailed.set(status.agentId, now.getTime());
+    const failedAt = status.failed.finishedAt?.getTime() ?? firstSeenFailed.get(status.agentId)!;
+    const left = failedAt + ERROR_GRACE_MS - now.getTime();
+    if (left > 0) {
+      status.pr = `${status.pr}; re-checking for ${formatDuration(left)} more in case Cursor resumes it`;
+      pending.push(status.ticketId);
     }
   }
   return pending;

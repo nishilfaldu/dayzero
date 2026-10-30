@@ -355,7 +355,7 @@ describe("--watch", () => {
     });
     const onSleep = (_ms: number, count: number) => {
       if (count === 1) agents.agents["bc-a"] = { state: "finished", finishedAt: LONG_AGO };
-      if (count === 2) agents.agents["bc-b"] = { state: "error" };
+      if (count === 2) agents.agents["bc-b"] = { state: "error", finishedAt: LONG_AGO };
     };
     const { code, stdout, sleeps } = await run(["status", "--watch"], dir, { agents, onSleep });
     expect(code).toBe(0);
@@ -610,12 +610,59 @@ describe("--watch: waiting for a PR after an agent finishes", () => {
   it("doesn't wait for a PR from failed or cancelled agents", async () => {
     const dir = await project([launch("alpha", "bc-a"), launch("beta", "bc-b")]);
     const agents = new FakeAgents({
-      "bc-a": { state: "error", finishedAt: NOW },
+      "bc-a": { state: "error", finishedAt: LONG_AGO },
       "bc-b": { state: "cancelled", finishedAt: NOW },
     });
     const { sleeps, stdout } = await run(["status", "--watch"], dir, { agents });
     expect(sleeps).toEqual([]);
     expect(stdout).not.toContain("waiting");
+  });
+
+  it("keeps re-checking an agent in error, since Cursor can resume it", async () => {
+    const dir = await project([launch("alpha", "bc-a")]);
+    const agents = new FakeAgents({ "bc-a": { state: "error", finishedAt: NOW } });
+    const onSleep = (_ms: number, count: number) => {
+      if (count === 2) agents.agents["bc-a"] = { state: "running" };
+      if (count === 3) agents.agents["bc-a"] = { state: "finished", finishedAt: LONG_AGO };
+    };
+    const { code, stdout, sleeps } = await run(["status", "--watch"], dir, { agents, onSleep });
+    expect(code).toBe(0);
+    expect(sleeps).toHaveLength(3);
+    expect(stdout).toContain("alpha   feature  error  no PR (agent failed); re-checking for 10m00s more in case Cursor resumes it\n");
+    expect(stdout).toContain("re-checking after an error: alpha; checking again in 60s\n");
+    expect(stdout.slice(stdout.indexOf("check 3"))).toContain("alpha   feature  running");
+  });
+
+  it("gives up on an agent in error 10 minutes after it failed", async () => {
+    const dir = await project([launch("alpha", "bc-a")]);
+    const agents = new FakeAgents({ "bc-a": { state: "error", finishedAt: NOW } });
+    const { stdout, sleeps } = await run(["status", "--watch"], dir, { agents });
+    expect(sleeps).toHaveLength(10);
+    expect(stdout.slice(stdout.indexOf("check 10"))).toContain("re-checking for 1m00s more");
+    const last = stdout.slice(stdout.indexOf("check 11"));
+    expect(last).toContain("alpha   feature  error  no PR (agent failed)\n");
+    expect(last).toContain("done watching");
+  });
+
+  it("times the wait from when it first saw the error if Cursor gives no finish time, and restarts it after a recovery", async () => {
+    const dir = await project([launch("alpha", "bc-a")]);
+    const agents = new FakeAgents({ "bc-a": { state: "error" } });
+    const onSleep = (_ms: number, count: number) => {
+      if (count === 1) agents.agents["bc-a"] = { state: "running" };
+      if (count === 2) agents.agents["bc-a"] = { state: "error" };
+    };
+    const { stdout, sleeps } = await run(["status", "--watch"], dir, { agents, onSleep });
+    // Errors again at check 3 (12:02), so the fresh wait runs to 12:12: checks 3..12 pending, check 13 gives up.
+    expect(sleeps).toHaveLength(12);
+    expect(stdout.slice(stdout.indexOf("check 3"))).toContain("re-checking for 10m00s more");
+  });
+
+  it("leaves plain status alone for an agent in error", async () => {
+    const dir = await project([launch("alpha", "bc-a")]);
+    const agents = new FakeAgents({ "bc-a": { state: "error", finishedAt: NOW } });
+    const { stdout, sleeps } = await run(["status"], dir, { agents });
+    expect(sleeps).toEqual([]);
+    expect(stdout).not.toContain("re-checking");
   });
 
   it("names running agents and agents awaiting a PR separately", async () => {

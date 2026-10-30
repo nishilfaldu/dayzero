@@ -142,37 +142,142 @@ describe("init", () => {
 });
 
 describe("run and init together", () => {
-  const WARNING = "warning: no `proofline init` launch is recorded";
-
-  it("run warns when no init is recorded, but still launches", async () => {
-    const dir = await project();
-    const { code, stderr, launcher } = await run(["run"], dir);
-    expect(code).toBe(0);
-    expect(stderr).toContain(WARNING);
-    expect(stderr).toContain("Launching anyway");
-    expect(launcher.requests).toHaveLength(3);
-  });
-
-  it("run doesn't warn once an init is recorded", async () => {
+  /** A project whose recorded init (bc-fake-1) finished with PR #5 from cursor/init, merged into main unless overridden. */
+  async function withInit(pull: { merged?: boolean; state?: "open" | "closed"; baseRef?: string } = {}) {
     const dir = await project();
     await run(["init"], dir);
-    const { stderr } = await run(["run"], dir);
-    expect(stderr).not.toContain(WARNING);
+    const github = new FakeGitHub();
+    github.addPull({ number: 5, headRef: "cursor/init", merged: true, state: "closed", ...pull });
+    const agents = new FakeAgents({ "bc-fake-1": { state: "finished", branch: "cursor/init" } });
+    return { dir, github, agents };
+  }
+
+  const NOT_LAUNCHED = "nothing was launched; run `proofline init` if you haven't, merge its PR, then run again";
+
+  it("launches once init's PR is merged into main, and says so", async () => {
+    const { dir, github, agents } = await withInit();
+    const { code, stdout, launcher, githubTokens } = await run(["run"], dir, { github, agents });
+    expect(code).toBe(0);
+    expect(stdout).toContain("init is set up: https://github.com/acme/app/pull/5 is merged into main\n");
+    expect(launcher.requests).toHaveLength(3);
+    expect(githubTokens).toEqual(["gh-token"]);
   });
 
-  it("run doesn't warn on --dry-run or when there is nothing to launch", async () => {
+  it("refuses when no init is recorded", async () => {
     const dir = await project();
-    expect((await run(["run", "--dry-run"], dir)).stderr).not.toContain(WARNING);
-    await run(["run"], dir);
-    expect((await run(["run"], dir)).stderr).not.toContain(WARNING);
+    const { code, stderr, launcherCreated } = await run(["run"], dir);
+    expect(code).toBe(1);
+    expect(stderr).toContain("error: no `proofline init` is recorded for acme/app. Agents start from main");
+    expect(stderr).toContain(NOT_LAUNCHED);
+    expect(stderr).toContain("--skip-init-check");
+    expect(launcherCreated).toBe(false);
+  });
+
+  it("refuses while init's PR is open", async () => {
+    const { dir, github, agents } = await withInit({ merged: false, state: "open" });
+    const { code, stderr, launcherCreated } = await run(["run"], dir, { github, agents });
+    expect(code).toBe(1);
+    expect(stderr).toContain("error: init's PR https://github.com/acme/app/pull/5 isn't merged yet.");
+    expect(launcherCreated).toBe(false);
+  });
+
+  it("refuses when init's PR was merged into another branch", async () => {
+    const { dir, github, agents } = await withInit({ baseRef: "develop" });
+    const { code, stderr } = await run(["run"], dir, { github, agents });
+    expect(code).toBe(1);
+    expect(stderr).toContain("init's PR https://github.com/acme/app/pull/5 was merged into develop, not main");
+  });
+
+  it("refuses while the init agent is still running without a PR", async () => {
+    const dir = await project();
+    await run(["init"], dir);
+    const agents = new FakeAgents({ "bc-fake-1": { state: "running" } });
+    const { code, stderr } = await run(["run"], dir, { agents });
+    expect(code).toBe(1);
+    expect(stderr).toContain("the init agent is still running and has no PR yet (https://cursor.com/agents/bc-fake-1)");
+  });
+
+  it("refuses when the init agent ended without a PR", async () => {
+    const dir = await project();
+    await run(["init"], dir);
+    const agents = new FakeAgents({ "bc-fake-1": { state: "error" } });
+    const { stderr } = await run(["run"], dir, { agents });
+    expect(stderr).toContain("the init agent has no PR (agent error: https://cursor.com/agents/bc-fake-1)");
+  });
+
+  it("is satisfied by any recorded init with a merged PR, newest first", async () => {
+    const { dir, github, agents } = await withInit();
+    await run(["init", "--force"], dir);
+    // The second init (also bc-fake-1 from a fresh fake launcher) is a different agent in practice; give it its own id.
+    const saved = await state(dir);
+    saved.launches[1]!.agentId = "bc-second";
+    await writeFile(join(dir, ".proofline", "run.json"), JSON.stringify(saved));
+    agents.agents["bc-second"] = { state: "running" };
+    const { code, launcher } = await run(["run"], dir, { github, agents });
+    expect(code).toBe(0);
+    expect(launcher.requests).toHaveLength(3);
+    expect(agents.lookups).toEqual(["bc-second", "bc-fake-1"]);
+  });
+
+  it("ignores an init recorded for a different repo", async () => {
+    const { dir, github, agents } = await withInit();
+    await writeFile(join(dir, "tasks.yaml"), TASKS.replace("repo: acme/app", "repo: acme/other"));
+    const { code, stderr } = await run(["run"], dir, { github, agents });
+    expect(code).toBe(1);
+    expect(stderr).toContain("no `proofline init` is recorded for acme/other");
+  });
+
+  it("refuses without a GitHub token, or when GitHub rejects it", async () => {
+    const { dir, github, agents } = await withInit();
+    const noToken = await run(["run"], dir, { github, agents, ghToken: undefined });
+    expect(noToken.code).toBe(1);
+    expect(noToken.stderr).toContain("error: no GitHub token to check init's PR");
+    expect(noToken.stderr).toContain("run `gh auth login`");
+    github.rejectToken = true;
+    const rejected = await run(["run"], dir, { github, agents });
+    expect(rejected.code).toBe(1);
+    expect(rejected.stderr).toContain("error: couldn't check init's PR: GitHub rejected the token");
+    expect(rejected.stderr).toContain("run `gh auth login`");
+    expect(rejected.launcherCreated).toBe(false);
+  });
+
+  it("reports a failed Cursor lookup and launches nothing", async () => {
+    const { dir, github } = await withInit();
+    const agents = new FakeAgents({ "bc-fake-1": new Error("socket hang up") });
+    const { code, stderr, launcherCreated } = await run(["run"], dir, { github, agents });
+    expect(code).toBe(1);
+    expect(stderr).toContain("error: couldn't check init's PR: socket hang up\nnothing was launched\n");
+    expect(launcherCreated).toBe(false);
+  });
+
+  it("--skip-init-check launches without looking anything up, and warns", async () => {
+    const dir = await project();
+    const agents = new FakeAgents({});
+    const { code, stderr, launcher, githubTokens } = await run(["run", "--skip-init-check"], dir, { agents });
+    expect(code).toBe(0);
+    expect(stderr).toContain("warning: --skip-init-check: not checking that init's PR is merged into main");
+    expect(launcher.requests).toHaveLength(3);
+    expect(agents.lookups).toEqual([]);
+    expect(githubTokens).toEqual([]);
+  });
+
+  it("doesn't check on --dry-run or when there is nothing to launch", async () => {
+    const { dir, github, agents } = await withInit();
+    const dry = await run(["run", "--dry-run"], dir, { github, agents });
+    expect(dry.code).toBe(0);
+    expect(agents.lookups).toEqual([]);
+    await run(["run"], dir, { github, agents });
+    agents.lookups.length = 0;
+    const again = await run(["run"], dir, { github, agents });
+    expect(again.stdout).toContain("nothing to launch.");
+    expect(agents.lookups).toEqual([]);
   });
 
   it("an init record doesn't count as a launched ticket, and run --force doesn't relaunch init", async () => {
-    const dir = await project();
-    await run(["init"], dir);
-    const first = await run(["run"], dir);
+    const { dir, github, agents } = await withInit();
+    const first = await run(["run"], dir, { github, agents });
     expect(first.launcher.requests).toHaveLength(3);
-    const forced = await run(["run", "--force"], dir);
+    const forced = await run(["run", "--force"], dir, { github, agents });
     expect(forced.launcher.requests.map((r) => r.prompt.split(":")[0])).toEqual([
       "/poteto-mode feature",
       "/poteto-mode security",
@@ -242,7 +347,7 @@ describe("status with an init launch", () => {
       "bc-alpha": { state: "finished", finishedAt: new Date(NOW.getTime() - 3_600_000) },
     });
     const onSleep = () => {
-      agents.agents["bc-init"] = { state: "error" };
+      agents.agents["bc-init"] = { state: "error", finishedAt: new Date(NOW.getTime() - 3_600_000) };
     };
     const { stdout, sleeps } = await run(["status", "--watch"], dir, { agents, onSleep });
     const rows = (check: string) =>

@@ -3,6 +3,9 @@ import type { RenderedPrompt } from "./render.js";
 import { type LaunchRecord, type RunState, launchedTicketIds } from "./state.js";
 import type { ModelChoice, TicketType } from "./types.js";
 
+/** Every agent, init and tickets alike, starts from this branch of the tasks.yaml repo. */
+export const STARTING_REF = "main";
+
 export interface Selection {
   toLaunch: RenderedPrompt[];
   /** Already launched and not asked for again. */
@@ -71,7 +74,7 @@ export async function launchAgents(
       const launchedAt = options.now().toISOString();
       const agent = await options.launcher.launch({
         repo: options.repo,
-        startingRef: "main",
+        startingRef: STARTING_REF,
         prompt,
         ...(options.model && { model: options.model }),
       });

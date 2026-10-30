@@ -35,6 +35,7 @@ export class FakeGitHub implements GitHub {
       repo: "acme/app",
       state: "open",
       merged: false,
+      baseRef: "main",
       body: "",
       labels: [],
       files: [],

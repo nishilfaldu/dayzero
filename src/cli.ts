@@ -11,18 +11,27 @@ import {
   resolveGitHubToken,
   runGhAuthToken,
 } from "./github.js";
-import { INIT_ID, loadInitTemplate, renderInitPrompt } from "./init.js";
-import { launchAgents, selectTickets, ticketItems } from "./launch.js";
+import { INIT_ID, checkInitMerged, loadInitTemplate, renderInitPrompt } from "./init.js";
+import { describeError, launchAgents, selectTickets, ticketItems } from "./launch.js";
 import { type Launcher, createCursorLauncher } from "./launcher.js";
 import { loadTemplate, renderAll, type RenderedPrompt } from "./render.js";
 import { type RunState, STATE_PATH, initLaunches, readState, writeState } from "./state.js";
-import { PR_GRACE_MS, type TicketStatus, applyPrGrace, checkLaunch, latestLaunches, recordedType } from "./status.js";
+import {
+  ERROR_GRACE_MS,
+  PR_GRACE_MS,
+  type TicketStatus,
+  applyErrorGrace,
+  applyPrGrace,
+  checkLaunch,
+  latestLaunches,
+  recordedType,
+} from "./status.js";
 import type { ProoflineConfig, Tasks } from "./types.js";
 
 export const WATCH_INTERVAL_MS = 60_000;
 
 export const USAGE = `usage: proofline init [--dry-run] [--force] [--tasks <file>] [--config <file>]
-       proofline run [--dry-run] [--only <id>]... [--force] [--tasks <file>] [--config <file>]
+       proofline run [--dry-run] [--only <id>]... [--force] [--skip-init-check] [--tasks <file>] [--config <file>]
        proofline status [--watch] [--tasks <file>]
 
 init     Starts one cloud agent on the tasks.yaml repo, from main, with prompts/init.md:
@@ -32,7 +41,8 @@ init     Starts one cloud agent on the tasks.yaml repo, from main, with prompts/
 run      Reads tasks.yaml and proofline.yaml, validates them, and starts one Cursor
          cloud agent per ticket on the tasks.yaml repo, from main. Launches are
          recorded in ${STATE_PATH}; tickets already recorded there are skipped.
-         Warns if no init is recorded yet.
+         Refuses to launch until a recorded init's PR is merged into main, since
+         agents start from main and would otherwise miss what init set up.
 status   For each ticket's latest launch, and init's, shows the agent's state and its
          PR. Once the PR is on GitHub, labels it with the ticket type, adds the
          prompt to its description, and comments if it changes existing test files.
@@ -42,14 +52,16 @@ options:
   --dry-run         print the exact prompt(s); launch nothing, need no API key
   --only <id>       run: launch just this ticket, even if it was launched before (repeatable)
   --force           run: relaunch every ticket; init: launch even if one is recorded
-  --watch           status: re-check every ${WATCH_INTERVAL_MS / 1000}s until no agent is running and each
-                    finished one has a PR or finished ${PR_GRACE_MS / 60_000}+ min ago
+  --skip-init-check run: launch without checking that init's PR is merged into main
+  --watch           status: re-check every ${WATCH_INTERVAL_MS / 1000}s until no agent is running, each
+                    finished one has a PR or finished ${PR_GRACE_MS / 60_000}+ min ago, and each one
+                    in error failed ${ERROR_GRACE_MS / 60_000}+ min ago (Cursor can resume a failed run)
   --tasks <file>    tickets file (default: tasks.yaml)
   --config <file>   model, repro and evidence config (default: proofline.yaml)
   -h, --help        show this help
 
 ${API_KEY_VAR} is read from the environment, or else from .env.local.
-status gets its GitHub token from \`gh auth token\`.`;
+run and status get their GitHub token from \`gh auth token\`.`;
 
 export interface Io {
   cwd: string;
@@ -94,7 +106,7 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
   }
   const command = positionals.length === 1 ? positionals[0] : undefined;
   if (command === "status") {
-    const runOnly = (["dry-run", "only", "force", "config"] as const).filter((flag) => values[flag] !== undefined);
+    const runOnly = (["dry-run", "only", "force", "skip-init-check", "config"] as const).filter((flag) => values[flag] !== undefined);
     if (runOnly.length > 0) {
       io.stderr(`error: ${runOnly.map((f) => `--${f}`).join(", ")} only applies to \`proofline run\`\n\n${USAGE}\n`);
       return 2;
@@ -102,12 +114,19 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
     return status(values.tasks ?? "tasks.yaml", values.watch ?? false, io);
   }
   if (command !== "run" && command !== "init") {
-    io.stderr(`${USAGE}\n`);
+    const problem =
+      positionals.length === 0
+        ? ""
+        : positionals.length > 1
+          ? `error: expected one command, got ${positionals.length}: ${positionals.join(" ")}\n\n`
+          : `error: unknown command "${positionals[0]}"\n\n`;
+    io.stderr(`${problem}${USAGE}\n`);
     return 2;
   }
   const misplaced = [
     ...(values.watch ? ["--watch only applies to `proofline status`"] : []),
     ...(command === "init" && values.only ? ["--only only applies to `proofline run`"] : []),
+    ...(command === "init" && values["skip-init-check"] ? ["--skip-init-check only applies to `proofline run`"] : []),
   ];
   if (misplaced.length > 0) {
     io.stderr(`${misplaced.map((m) => `error: ${m}\n`).join("")}\n${USAGE}\n`);
@@ -144,13 +163,13 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
     return 0;
   }
 
-  return launch(prompts, inputs, { only, force: values.force ?? false }, io);
+  return launch(prompts, inputs, { only, force: values.force ?? false, skipInitCheck: values["skip-init-check"] ?? false }, io);
 }
 
 async function launch(
   prompts: RenderedPrompt[],
   { tasks, config }: { tasks: Tasks; config: ProoflineConfig },
-  flags: { only: string[]; force: boolean },
+  flags: { only: string[]; force: boolean; skipInitCheck: boolean },
   io: Io,
 ): Promise<number> {
   let state: RunState;
@@ -170,16 +189,17 @@ async function launch(
     return 0;
   }
 
-  if (initLaunches(state).length === 0) {
-    io.stderr(
-      "warning: no `proofline init` launch is recorded, so agents may start without pstack, the verification skills, AGENTS.md or a set-up environment. Launching anyway; run `proofline init` to set the repo up.\n",
-    );
-  }
-
   const apiKey = await resolveApiKey(io.cwd, io.env);
   if (!apiKey) {
     io.stderr(`error: ${API_KEY_VAR} is not set in the environment or in .env.local; nothing was launched\n`);
     return 1;
+  }
+
+  if (flags.skipInitCheck) {
+    io.stderr("warning: --skip-init-check: not checking that init's PR is merged into main; agents may start without what init sets up\n");
+  } else {
+    const ready = await initReady(state, tasks.repo, apiKey.key, io);
+    if (ready !== 0) return ready;
   }
 
   const model = config.model ? config.model.id : "the SDK default model";
@@ -204,6 +224,35 @@ async function launch(
   ];
   io.stdout(summary.join(""));
   return outcome.failed.length > 0 ? 1 : 0;
+}
+
+/**
+ * 0 when a recorded init's PR is merged into main; otherwise says why on stderr and returns 1.
+ * Ticket agents start from main, so before that merge they'd miss pstack, the skills and AGENTS.md.
+ */
+async function initReady(state: RunState, repo: string, apiKey: string, io: Io): Promise<number> {
+  const token = await resolveGitHubToken(io.ghAuthToken);
+  if (!token) {
+    io.stderr(`error: no GitHub token to check init's PR: \`gh auth token\` gave none; ${LOGIN_HINT}\nnothing was launched\n`);
+    return 1;
+  }
+  let check: Awaited<ReturnType<typeof checkInitMerged>>;
+  try {
+    check = await checkInitMerged(state, repo, { agents: io.createAgentReader(apiKey), github: io.createGitHub(token) });
+  } catch (err) {
+    const reason = err instanceof GitHubAuthError ? `${err.message}; ${LOGIN_HINT}` : describeError(err);
+    io.stderr(`error: couldn't check init's PR: ${reason}\nnothing was launched\n`);
+    return 1;
+  }
+  if (!check.ready) {
+    io.stderr(
+      `error: ${check.reason}. Agents start from main, so they'd miss pstack, the verification skills, AGENTS.md and the environment setup until init's PR is merged there.\n` +
+        "nothing was launched; run `proofline init` if you haven't, merge its PR, then run again (or pass --skip-init-check to launch anyway)\n",
+    );
+    return 1;
+  }
+  io.stdout(`init is set up: ${check.pull.url} is merged into main\n`);
+  return 0;
 }
 
 /** Launches the one setup agent, recorded as "init". Same repo, branch, model and recording as `run`. */
@@ -295,6 +344,7 @@ async function status(tasksLabel: string, watch: boolean, io: Io): Promise<numbe
   }
   const clients: StatusClients = { agents: io.createAgentReader(apiKey.key), github: io.createGitHub(token) };
   const firstSeenFinished = new Map<string, number>();
+  const firstSeenFailed = new Map<string, number>();
 
   for (let check = 1; ; check++) {
     let statuses: TicketStatus[];
@@ -309,6 +359,7 @@ async function status(tasksLabel: string, watch: boolean, io: Io): Promise<numbe
 
     const now = io.now();
     const awaitingPr = watch ? applyPrGrace(statuses, now, firstSeenFinished) : [];
+    const mayResume = watch ? applyErrorGrace(statuses, now, firstSeenFailed) : [];
     if (watch) io.stdout(`${check > 1 ? "\n" : ""}[${now.toISOString()}] check ${check}\n`);
     io.stdout(table([["TICKET", "TYPE", "AGENT", "PR"], ...statuses.map((s) => [s.ticketId, s.type, s.agent, s.pr])]));
     const details = statuses.flatMap((s) => [...s.changes, ...s.notes].map((line) => `  ${s.ticketId}: ${line}\n`));
@@ -317,13 +368,14 @@ async function status(tasksLabel: string, watch: boolean, io: Io): Promise<numbe
     if (problems.length > 0) io.stderr(`\n${problems.join("")}`);
 
     const running = statuses.filter((s) => NOT_DONE.has(s.agent)).map((s) => s.ticketId);
-    if (!watch || running.length + awaitingPr.length === 0) {
+    if (!watch || running.length + awaitingPr.length + mayResume.length === 0) {
       if (watch) io.stdout("\nnothing left to wait for; done watching\n");
       return problems.length > 0 ? 1 : 0;
     }
     const waitingOn = [
       ...(running.length > 0 ? [`still running: ${running.join(", ")}`] : []),
       ...(awaitingPr.length > 0 ? [`waiting for a PR: ${awaitingPr.join(", ")}`] : []),
+      ...(mayResume.length > 0 ? [`re-checking after an error: ${mayResume.join(", ")}`] : []),
     ];
     io.stdout(`\n${waitingOn.join("; ")}; checking again in ${WATCH_INTERVAL_MS / 1000}s\n`);
     await io.sleep(WATCH_INTERVAL_MS);
@@ -369,6 +421,7 @@ function parseCliArgs(argv: string[]) {
     allowPositionals: true,
     options: {
       "dry-run": { type: "boolean" },
+      "skip-init-check": { type: "boolean" },
       only: { type: "string", multiple: true },
       force: { type: "boolean" },
       watch: { type: "boolean" },

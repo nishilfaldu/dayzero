@@ -10,8 +10,9 @@ Requires Node 22.13 or later, which `@cursor/sdk` needs.
 npm install
 npm run proofline -- init --dry-run       # print the setup prompt; no API key, no network
 npm run proofline -- init                 # launch the one setup agent on the repo
+npm run proofline -- status --watch       # follow it to its PR; then review and merge that PR
 npm run proofline -- run --dry-run        # print every prompt; no API key, no network
-npm run proofline -- run                  # launch an agent for each ticket not yet launched
+npm run proofline -- run                  # once init's PR is merged: an agent per ticket not yet launched
 npm run proofline -- status               # agent state + PR per ticket; labels and annotates PRs
 npm run proofline -- status --watch       # same, every 60s until nothing is pending
 npm run build && node dist/bin.js run     # same, from the build
@@ -32,7 +33,15 @@ npm test                                  # uses a fake Cursor client; no networ
 
 - **`--dry-run`** prints the prompt and launches nothing.
 - **Running `init` again** refuses while an init is recorded, and names the existing agent. **`--force`** launches another one; the earlier record is kept.
-- **`run` warns, but still launches,** when no init is recorded. It doesn't warn on `--dry-run` or when there's nothing to launch.
+
+**`run` waits for init's PR to be merged.** Every agent starts from `main`, so ticket agents only get pstack, the skills, AGENTS.md and the environment setup once init's PR is merged there. Before launching anything, `run` looks up the recorded init's agent and PR, the same way `status` does, and refuses unless that PR is merged into `main`. The error says what's missing:
+- no init is recorded for the `tasks.yaml` repo
+- the init agent is still running, or ended without a PR
+- its PR is still open, or was merged into a branch other than `main`
+
+If init was launched more than once, any one of them with a merged PR is enough. `--skip-init-check` launches without checking and prints a warning. The check is skipped on `--dry-run` and when there's nothing to launch.
+
+So the order is: `init`, `status --watch` until its PR is up, review and merge that PR, then `run`.
 
 ## Launching
 
@@ -50,11 +59,12 @@ Each successful launch is appended to `.proofline/run.json` (gitignored) before 
 - **`--force`** relaunches every ticket. Relaunches add new records; old ones are kept.
 - **A failed launch** doesn't stop the others. It is listed with its reason, isn't recorded, and is retried on the next plain `run`.
 - **`CURSOR_API_KEY`** comes from the environment, or else from `.env.local`. If neither has it, proofline fails before launching anything. No key is needed when there's nothing to launch.
+- **The init check** needs a GitHub token from `gh auth token`, like `status` (see Auth below), unless `--skip-init-check` is passed.
 - **`--dry-run`** prints prompts exactly as before. It never reads `.proofline/` or the key. `--only` narrows which prompts it prints.
 
 Exit codes:
 - **0:** everything launched, or nothing needed to.
-- **1:** invalid input, a missing key, or at least one failed launch.
+- **1:** invalid input, a missing key or GitHub token, init's PR not merged into `main`, or at least one failed launch.
 - **2:** bad usage, including an unknown `--only` id.
 
 ## Status
@@ -62,10 +72,11 @@ Exit codes:
 `proofline status` reads `.proofline/run.json` and checks each ticket's latest launch. It prints a table:
 
 ```
-TICKET       TYPE      AGENT      PR
-notes-count  feature   finished   https://github.com/nishilfaldu/epic-stack/pull/12
-note-idor    security  running    no PR yet (branch cursor/fix-idor-1a2b not pushed yet)
-other        bug       error      branch cursor/other-9f8e never reached GitHub
+TICKET            TYPE         AGENT     PR
+init              -            finished  https://github.com/nishilfaldu/epic-stack/pull/12 (merged)
+share-notes       feature      finished  https://github.com/nishilfaldu/epic-stack/pull/13
+note-delete-idor  security     running   no PR yet (branch cursor/note-delete-1a2b not pushed yet)
+reset-code-race   concurrency  error     branch cursor/reset-race-9f8e never reached GitHub
 ```
 
 **Type** is the one recorded in `run.json` at launch. Records written before types were recorded fall back to the ticket's type in `tasks.yaml`, which is only read in that case. If neither has it, the type shows as `?` and no label is added.
@@ -96,14 +107,15 @@ Once a PR is confirmed, `status` brings it up to date. Running it again changes 
 A ticket is pending if:
 - **its agent is running.** A failed lookup counts too, so it gets retried.
 - **its agent finished less than 5 minutes ago and has no confirmed PR.** The PR column counts down, e.g. `no PR yet; waiting 3m20s more (branch cursor/x is on GitHub)`. After 5 minutes it reads `finished without a PR (…)` and the watch stops waiting on it.
+- **its agent failed less than 10 minutes ago.** Cursor sometimes reports a run as failed and then carries on with it, so the watch keeps re-checking, e.g. `no PR (agent failed); re-checking for 7m10s more in case Cursor resumes it`. If the agent goes back to running, it's followed as usual. After 10 minutes the watch stops waiting on it.
 
-The finish time comes from Cursor: the run's start plus its duration. If Cursor doesn't report one, the clock starts when the watch first sees the agent finished.
+Finish and failure times come from Cursor: the run's start plus its duration. If Cursor doesn't report one, the clock starts when the watch first sees the agent finished or failed. An agent that fails again after recovering gets a fresh 10 minutes.
 
-Failed, cancelled and unknown agents aren't waited on. Plain `status` never waits.
+Cancelled and unknown agents aren't waited on. Plain `status` never waits.
 
 `run.json` is re-read on every check, so launches made meanwhile are picked up.
 
-**Auth:** the GitHub token comes only from `gh auth token`, run with `GH_TOKEN` and `GITHUB_TOKEN` removed from its environment. gh would otherwise print those instead, so the token is always the account `gh auth login` stored. If there's no token, or GitHub rejects it, `status` stops and says to run `gh auth login`. `CURSOR_API_KEY` is found the same way as for `run`.
+**Auth:** the GitHub token comes only from `gh auth token`, run with `GH_TOKEN` and `GITHUB_TOKEN` removed from its environment. gh would otherwise print those instead, so the token is always the account `gh auth login` stored. If there's no token, or GitHub rejects it, `status` and `run`'s init check stop and say to run `gh auth login`. `CURSOR_API_KEY` is found the same way as for `run`.
 
 ## Inputs
 

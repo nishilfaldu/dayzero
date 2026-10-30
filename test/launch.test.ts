@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { describeError } from "../src/launch.js";
 import type { LaunchRecord, RunState } from "../src/state.js";
-import { CONFIG, FakeLauncher, NOW, TASKS, run, tempDir } from "./fake.js";
+import { CONFIG, FakeLauncher, NOW, TASKS, run as runCli, tempDir } from "./fake.js";
+
+/** These tests are about launching, so `run` skips the init check; init.test.ts covers that check. */
+const run: typeof runCli = (argv, cwd, options) =>
+  runCli(argv[0] === "run" ? [...argv, "--skip-init-check"] : argv, cwd, options);
 
 async function project(files: Record<string, string> = {}) {
   return tempDir({ "tasks.yaml": TASKS, "proofline.yaml": CONFIG, ...files });

@@ -9,6 +9,8 @@ export interface PullRequest {
   state: "open" | "closed";
   merged: boolean;
   headRef: string;
+  /** The branch the PR is opened against, e.g. main. */
+  baseRef: string;
   body: string;
   labels: string[];
 }
@@ -181,7 +183,7 @@ interface ApiPull {
   merged_at: string | null;
   body: string | null;
   head: { ref: string };
-  base: { repo: { full_name: string } };
+  base: { ref: string; repo: { full_name: string } };
   labels: { name: string }[];
 }
 
@@ -199,6 +201,7 @@ function toPull(pull: ApiPull): PullRequest {
     state: pull.state,
     merged: pull.merged_at !== null,
     headRef: pull.head.ref,
+    baseRef: pull.base.ref,
     body: pull.body ?? "",
     labels: pull.labels.map((l) => l.name),
   };

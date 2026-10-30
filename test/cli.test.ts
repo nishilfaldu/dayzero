@@ -88,7 +88,7 @@ describe("proofline run --dry-run", () => {
 
   it("ignores existing run state, still printing already-launched tickets", async () => {
     const dir = await tempDir({ "tasks.yaml": TASKS, "proofline.yaml": CONFIG });
-    expect((await runIn(["run"], dir)).code).toBe(0);
+    expect((await runIn(["run", "--skip-init-check"], dir)).code).toBe(0);
     const { stdout } = await runIn(["run", "--dry-run"], dir);
     expect(stdout.match(/^===== /gm)).toHaveLength(3);
   });
@@ -105,5 +105,20 @@ describe("proofline run --dry-run", () => {
     expect((await run(["launch"])).code).toBe(2);
     expect((await run(["run", "--dryrun"])).code).toBe(2);
     expect((await run(["--help"])).code).toBe(0);
+  });
+
+  it("names an unknown command, or extra ones, before the usage", async () => {
+    const unknown = await run(["launch"]);
+    expect(unknown.stderr.startsWith('error: unknown command "launch"\n\nusage: proofline init')).toBe(true);
+    const extra = await run(["run", "now"]);
+    expect(extra.code).toBe(2);
+    expect(extra.stderr.startsWith("error: expected one command, got 2: run now\n\nusage:")).toBe(true);
+    expect((await run([])).stderr.startsWith("usage:")).toBe(true);
+  });
+
+  it("accepts --skip-init-check only on run", async () => {
+    expect((await run(["status", "--skip-init-check"])).stderr).toContain("--skip-init-check only applies to `proofline run`");
+    expect((await run(["init", "--skip-init-check"])).stderr).toContain("--skip-init-check only applies to `proofline run`");
+    expect((await run(["run", "--dry-run", "--skip-init-check"])).code).toBe(0);
   });
 });
