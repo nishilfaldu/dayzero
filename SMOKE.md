@@ -1,0 +1,1 @@
+proofline smoke test
