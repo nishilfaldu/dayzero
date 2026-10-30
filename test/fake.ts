@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Io, main } from "../src/cli.js";
 import type { LaunchRequest, LaunchedAgent, Launcher } from "../src/launcher.js";
+import { FakeAgents, FakeGitHub } from "./fake-status.js";
 
 /** Records every launch; `fail` decides per request whether to throw instead. */
 export class FakeLauncher implements Launcher {
@@ -21,14 +22,29 @@ export class FakeLauncher implements Launcher {
 
 export const NOW = new Date("2026-10-30T12:00:00.000Z");
 
-export async function run(
-  argv: string[],
-  cwd: string,
-  { launcher = new FakeLauncher(), env = { CURSOR_API_KEY: "test-key" } as NodeJS.ProcessEnv } = {},
-) {
+export interface RunOptions {
+  launcher?: FakeLauncher;
+  env?: NodeJS.ProcessEnv;
+  agents?: FakeAgents;
+  github?: FakeGitHub;
+  /** What `gh auth token` prints; undefined means gh fails. */
+  ghToken?: string;
+}
+
+export async function run(argv: string[], cwd: string, options: RunOptions = {}) {
+  const {
+    launcher = new FakeLauncher(),
+    env = { CURSOR_API_KEY: "test-key" },
+    agents = new FakeAgents({}),
+    github = new FakeGitHub(),
+  } = options;
+  // An explicit `ghToken: undefined` means gh fails, so it can't fall back to the default.
+  const ghToken = "ghToken" in options ? options.ghToken : "gh-token";
   let stdout = "";
   let stderr = "";
   let launcherCreated = false;
+  const githubTokens: string[] = [];
+  const cursorKeys: string[] = [];
   const io: Io = {
     cwd,
     env,
@@ -43,10 +59,19 @@ export async function run(
       launcher.apiKeys.push(apiKey);
       return launcher;
     },
+    createAgentReader: (apiKey) => {
+      cursorKeys.push(apiKey);
+      return agents;
+    },
+    createGitHub: (token) => {
+      githubTokens.push(token);
+      return github;
+    },
+    ghAuthToken: async () => ghToken,
     now: () => NOW,
   };
   const code = await main(argv, io);
-  return { code, stdout, stderr, launcher, launcherCreated };
+  return { code, stdout, stderr, launcher, launcherCreated, githubTokens, cursorKeys };
 }
 
 export async function tempDir(files: Record<string, string>) {

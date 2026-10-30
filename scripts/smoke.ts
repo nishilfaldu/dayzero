@@ -11,9 +11,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Agent } from "@cursor/sdk";
-import { main } from "../src/cli.js";
+import { main, processIo } from "../src/cli.js";
 import { API_KEY_VAR, resolveApiKey } from "../src/env.js";
-import { createCursorLauncher } from "../src/launcher.js";
 import { readState } from "../src/state.js";
 
 const POLL_MS = 10_000;
@@ -31,14 +30,7 @@ const dir = await mkdtemp(join(tmpdir(), "proofline-smoke-"));
 await cp(join(root, "smoke"), dir, { recursive: true });
 console.log(`smoke: using ${apiKey.source} key; working in ${dir}\n`);
 
-const code = await main(["run"], {
-  cwd: dir,
-  env: { [API_KEY_VAR]: apiKey.key },
-  stdout: (text) => process.stdout.write(text),
-  stderr: (text) => process.stderr.write(text),
-  createLauncher: (key) => createCursorLauncher(key),
-  now: () => new Date(),
-});
+const code = await main(["run"], { ...processIo, cwd: dir, env: { [API_KEY_VAR]: apiKey.key } });
 if (code !== 0) {
   console.error(`\nsmoke: FAILED to launch (exit ${code})`);
   process.exit(1);

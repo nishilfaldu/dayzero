@@ -1,18 +1,32 @@
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { type AgentReader, createCursorReader } from "./agents.js";
 import { ConfigError, loadConfig, loadTasks } from "./config.js";
 import { API_KEY_VAR, resolveApiKey } from "./env.js";
+import {
+  type GitHub,
+  GitHubAuthError,
+  LOGIN_HINT,
+  createGitHubClient,
+  resolveGitHubToken,
+  runGhAuthToken,
+} from "./github.js";
 import { launchTickets, selectTickets } from "./launch.js";
 import { type Launcher, createCursorLauncher } from "./launcher.js";
 import { loadTemplate, renderAll, type RenderedPrompt } from "./render.js";
 import { type RunState, STATE_PATH, readState, writeState } from "./state.js";
+import { type TicketStatus, checkLaunch, latestLaunches } from "./status.js";
 import type { ProoflineConfig, Tasks } from "./types.js";
 
 export const USAGE = `usage: proofline run [--dry-run] [--only <id>]... [--force] [--tasks <file>] [--config <file>]
+       proofline status [--tasks <file>]
 
-Reads tasks.yaml and proofline.yaml, validates them, and starts one Cursor
-cloud agent per ticket on the tasks.yaml repo, from main. Launches are recorded
-in ${STATE_PATH}; tickets already recorded there are skipped.
+run      Reads tasks.yaml and proofline.yaml, validates them, and starts one Cursor
+         cloud agent per ticket on the tasks.yaml repo, from main. Launches are
+         recorded in ${STATE_PATH}; tickets already recorded there are skipped.
+status   For each ticket's latest launch, shows the agent's state and its PR. Once
+         the PR is on GitHub, labels it, adds the prompt to its description, and
+         comments if it changes existing test files. Safe to run repeatedly.
 
 options:
   --dry-run         print each ticket's exact prompt; launch nothing, need no API key
@@ -22,7 +36,8 @@ options:
   --config <file>   model, repro and evidence config (default: proofline.yaml)
   -h, --help        show this help
 
-${API_KEY_VAR} is read from the environment, or else from .env.local.`;
+${API_KEY_VAR} is read from the environment, or else from .env.local.
+status uses GITHUB_TOKEN if set, or else \`gh auth token\`.`;
 
 export interface Io {
   cwd: string;
@@ -30,19 +45,25 @@ export interface Io {
   stdout: (text: string) => void;
   stderr: (text: string) => void;
   createLauncher: (apiKey: string) => Launcher;
+  createAgentReader: (apiKey: string) => AgentReader;
+  createGitHub: (token: string) => GitHub;
+  ghAuthToken: () => Promise<string | undefined>;
   now: () => Date;
 }
 
-const processIo: Io = {
+export const processIo: Io = {
   cwd: process.cwd(),
   env: process.env,
   stdout: (text) => process.stdout.write(text),
   stderr: (text) => process.stderr.write(text),
   createLauncher: (apiKey) => createCursorLauncher(apiKey),
+  createAgentReader: (apiKey) => createCursorReader(apiKey),
+  createGitHub: (token) => createGitHubClient(token),
+  ghAuthToken: () => runGhAuthToken(),
   now: () => new Date(),
 };
 
-/** Runs the CLI and returns the exit code: 0 ok, 1 invalid input or a failed launch, 2 bad usage. */
+/** Runs the CLI and returns the exit code: 0 ok, 1 invalid input or a failed launch or lookup, 2 bad usage. */
 export async function main(argv: string[], io: Io = processIo): Promise<number> {
   let args: ReturnType<typeof parseCliArgs>;
   try {
@@ -57,7 +78,16 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
     io.stdout(`${USAGE}\n`);
     return 0;
   }
-  if (positionals.length !== 1 || positionals[0] !== "run") {
+  const command = positionals.length === 1 ? positionals[0] : undefined;
+  if (command === "status") {
+    const runOnly = (["dry-run", "only", "force", "config"] as const).filter((flag) => values[flag] !== undefined);
+    if (runOnly.length > 0) {
+      io.stderr(`error: ${runOnly.map((f) => `--${f}`).join(", ")} only applies to \`proofline run\`\n\n${USAGE}\n`);
+      return 2;
+    }
+    return status(values.tasks ?? "tasks.yaml", io);
+  }
+  if (command !== "run") {
     io.stderr(`${USAGE}\n`);
     return 2;
   }
@@ -142,6 +172,61 @@ async function launch(
   ];
   io.stdout(summary.join(""));
   return outcome.failed.length > 0 ? 1 : 0;
+}
+
+async function status(tasksLabel: string, io: Io): Promise<number> {
+  let state: RunState;
+  let tasks: Tasks;
+  try {
+    state = await readState(io.cwd);
+    if (state.launches.length === 0) {
+      io.stdout(`nothing launched yet (${STATE_PATH} has no launches); run \`proofline run\` first\n`);
+      return 0;
+    }
+    tasks = await loadTasks(resolve(io.cwd, tasksLabel), tasksLabel);
+  } catch (err) {
+    return reportConfigError(err, io);
+  }
+
+  const apiKey = await resolveApiKey(io.cwd, io.env);
+  if (!apiKey) {
+    io.stderr(`error: ${API_KEY_VAR} is not set in the environment or in .env.local\n`);
+    return 1;
+  }
+  const token = await resolveGitHubToken(io.env, io.ghAuthToken);
+  if (!token) {
+    io.stderr(`error: no GitHub token: GITHUB_TOKEN is not set and \`gh auth token\` gave none; ${LOGIN_HINT}\n`);
+    return 1;
+  }
+
+  const clients = { agents: io.createAgentReader(apiKey.key), github: io.createGitHub(token.token) };
+  const tickets = new Map(tasks.tickets.map((t) => [t.id, t]));
+  const statuses: TicketStatus[] = [];
+  try {
+    for (const launch of latestLaunches(state)) {
+      statuses.push(await checkLaunch(launch, tickets.get(launch.ticketId), clients));
+    }
+  } catch (err) {
+    if (!(err instanceof GitHubAuthError)) throw err;
+    io.stderr(`error: ${err.message} (token from ${token.source}); ${LOGIN_HINT}\n`);
+    return 1;
+  }
+
+  io.stdout(table([["TICKET", "TYPE", "AGENT", "PR"], ...statuses.map((s) => [s.ticketId, s.type, s.agent, s.pr])]));
+  const details = statuses.flatMap((s) => [...s.changes, ...s.notes].map((line) => `  ${s.ticketId}: ${line}\n`));
+  if (details.length > 0) io.stdout(`\n${details.join("")}`);
+  const problems = statuses.flatMap((s) => s.problems.map((p) => `error: ${s.ticketId}: ${p}\n`));
+  if (problems.length > 0) io.stderr(`\n${problems.join("")}`);
+  return problems.length > 0 ? 1 : 0;
+}
+
+/** Left-aligned columns, two spaces apart; the last column isn't padded. */
+function table(rows: string[][]): string {
+  const widths = rows[0]!.map((_, col) => Math.max(...rows.map((row) => row[col]!.length)));
+  return rows
+    .map((row) => row.map((cell, col) => (col === row.length - 1 ? cell : cell.padEnd(widths[col]!))).join("  "))
+    .join("\n")
+    .concat("\n");
 }
 
 function reportConfigError(err: unknown, io: Io): number {
