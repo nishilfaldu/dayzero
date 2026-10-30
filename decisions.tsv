@@ -1,0 +1,8 @@
+ts	phase	decision	why	evidence	result
+2026-10-30T19:27:08Z	frame	Add SMOKE.md at the repo root with one fixed line	The ticket asks for that marker and a committed decision log, and it says to change nothing else	README.md	open
+2026-10-30T19:27:08Z	how	Treated the repo as an empty scratch tree with only README.md	A layout check found no tests, no CI, and no existing SMOKE.md, so the new file collides with nothing	README.md	no collision
+2026-10-30T19:27:08Z	design	Skipped a design bakeoff	The ticket names the path and the exact line, so a second design would violate the ticket	README.md	skipped
+2026-10-30T19:27:08Z	shape	Store the marker as one plain text line with a trailing newline	The smallest structure is the constant itself, and a trailing newline matches README.md so tools count one line	README.md	chosen
+2026-10-30T19:27:08Z	tests	Left tests untouched	The ticket does not need a test, and the tree has no test suite to edit	README.md	unchanged
+2026-10-30T19:28:37Z	verify	Read SMOKE.md and compared its 21 bytes to the required line	The check has to read the file, not the writer's report	commit e9756bd SMOKE.md	match
+2026-10-30T19:28:37Z	delegate	Accepted the one-file marker write	The byte compare matched and git status showed no other path from that write	commit e9756bd	accepted
