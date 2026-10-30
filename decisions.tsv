@@ -6,3 +6,4 @@ ts	phase	decision	why	evidence	result
 2026-10-30T19:27:08Z	tests	Left tests untouched	The ticket does not need a test, and the tree has no test suite to edit	README.md	unchanged
 2026-10-30T19:28:37Z	verify	Read SMOKE.md and compared its 21 bytes to the required line	The check has to read the file, not the writer's report	commit e9756bd SMOKE.md	match
 2026-10-30T19:28:37Z	delegate	Accepted the one-file marker write	The byte compare matched and git status showed no other path from that write	commit e9756bd	accepted
+2026-10-30T19:30:14Z	review	Accepted a comment pass that deleted nothing	The marker line is the feature, and the log rows are the trail, so neither is a comment	SMOKE.md decisions.tsv	0 deletions
