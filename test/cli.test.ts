@@ -12,21 +12,37 @@ describe("proofline run --dry-run", () => {
   it("prints one prompt per sample ticket", async () => {
     const { code, stdout, stderr } = await run(["run", "--dry-run"]);
     expect(code).toBe(0);
-    expect(stdout).toContain("===== notes-count (feature) =====\n/poteto-mode feature: Show a note count");
-    expect(stdout).toContain("===== note-edit-idor (security) =====\n/poteto-mode security: Users can edit");
-    expect(stderr).toContain("dry run: 2 prompt(s) for nishilfaldu/epic-stack; nothing was launched");
+    expect(stdout).toContain("===== share-notes (feature) =====\n/poteto-mode feature: Let me share a note");
+    expect(stdout).toContain("===== reset-code-race (concurrency) =====\n/poteto-mode concurrency: A password reset code");
+    expect(stdout).toContain("===== note-delete-idor (security) =====\n/poteto-mode security: My note was deleted");
+    expect(stdout).toContain("===== notes-page-perf (perf) =====\n/poteto-mode perf: The notes page is slow");
+    expect(stdout).toContain("===== prisma-7 (migration) =====\n/poteto-mode migration: Move the app off Prisma 6");
+    expect(stderr).toContain("dry run: 5 prompt(s) for nishilfaldu/epic-stack; nothing was launched");
   });
 
-  it("uses the shipped proofline.yaml repro lines: feature override, default for the rest", async () => {
+  it("uses the shipped proofline.yaml repro lines: feature and migration overrides, default for the rest", async () => {
     const { stdout } = await run(["run", "--dry-run"]);
-    const [feature, security] = stdout.split(/^===== .+ =====\n/m).filter(Boolean);
-    expect(feature!.split("\n")[1]).toBe("write the failing e2e test first.");
-    expect(security!.split("\n")[1]).toBe("repro it on main first; if it doesn't repro, stop and say so.");
+    const repro = stdout
+      .split(/^===== .+ =====\n/m)
+      .filter(Boolean)
+      .map((prompt) => prompt.split("\n")[1]);
+    const byDefault = "repro it on main first; if it doesn't repro, stop and say so.";
+    expect(repro).toEqual([
+      "write the failing e2e test first.",
+      byDefault,
+      byDefault,
+      byDefault,
+      "record the current versions and a passing test run on main first.",
+    ]);
   });
 
   it("dedupes evidence that appears in both by_type and the ticket", async () => {
-    const { stdout } = await run(["run", "--dry-run"]);
-    expect(stdout.match(/failing test on main, passing on the branch/g)).toHaveLength(1);
+    const dir = await tempDir({
+      "tasks.yaml": "repo: a/b\ntickets:\n  - {id: one, type: bug, title: T, description: D, done: X, evidence: [red then green]}\n",
+      "proofline.yaml": "repro:\n  default: repro it.\nevidence:\n  by_type: {bug: [red then green]}\n",
+    });
+    const { stdout } = await run(["run", "--dry-run"], dir);
+    expect(stdout.match(/red then green/g)).toHaveLength(1);
   });
 
   it("reads files from the given paths", async () => {

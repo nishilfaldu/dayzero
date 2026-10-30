@@ -1,23 +1,78 @@
 repo: nishilfaldu/epic-stack
 
 tickets:
-  - id: notes-count
+  - id: share-notes
     type: feature
-    title: Show a note count on the notes page
+    title: Let me share a note with another user
     description: >-
-      The notes sidebar at /users/:username/notes lists a user's notes but not
-      how many there are. Show "N notes" above the list, and "1 note" when
-      there is exactly one.
-    done: the notes page shows the right count for 0, 1 and several notes
+      I want to share one of my notes with someone else on the site, either as
+      a viewer who can only read it or as an editor who can also change it.
+      People I've shared with should find the note under a "Shared with me"
+      list, and I want to be able to take access back at any time. Right now
+      the only way to show someone a note is to copy its text out.
+    done: >-
+      the owner can share a note with another user as viewer or editor; that
+      user sees it under "Shared with me"; a viewer can open it but gets 403
+      trying to edit it; an editor can edit it but can't delete or re-share it;
+      after the owner revokes access, the note leaves that user's list and
+      opening it returns 404
     evidence:
-      - screenshot of the notes page with 0, 1 and 3 notes
+      - screenshots of sharing as viewer and as editor, the "Shared with me" list, and the note after access is revoked
 
-  - id: note-edit-idor
-    type: security
-    title: Users can edit other users' notes
+  - id: reset-code-race
+    type: concurrency
+    title: A password reset code worked twice
     description: >-
-      A logged-in user can submit the note editor form with another user's
-      note id and overwrite that note.
-    done: editing a note you don't own returns 403 and leaves the note unchanged
-    evidence:
-      - failing test on main, passing on the branch
+      One of our users submitted their password reset code from two tabs at
+      almost the same moment, and both tabs went through to the "set a new
+      password" step. A reset code is supposed to work once. Using it again
+      after the first attempt has finished is correctly refused; it only gets
+      through twice when both submissions arrive together.
+    done: >-
+      when the same valid reset code is submitted twice at the same time,
+      exactly one submission reaches the set-new-password step and the other
+      is refused as an invalid code, in every one of 50 repeated attempts
+
+  - id: note-delete-idor
+    type: security
+    title: My note was deleted by someone else
+    description: >-
+      A user reports that one of their notes vanished, and they didn't delete
+      it. We can reproduce it: a regular logged-in user can delete a note that
+      belongs to another user, even though the Delete button isn't shown on
+      other people's notes. Admins are allowed to delete any note; regular
+      users should only be able to delete their own.
+    done: >-
+      a regular user's request to delete a note they don't own returns 403 and
+      the note still exists; owners can still delete their own notes; an admin
+      can still delete another user's note
+
+  - id: notes-page-perf
+    type: perf
+    title: The notes page is slow when I have a lot of notes
+    description: >-
+      I have about 5,000 notes, and my notes page takes a long time to load
+      every time I open it or move between notes. Accounts with a handful of
+      notes don't notice anything.
+    done: >-
+      with 5,000 notes seeded for one user, the median of 10 loads of that
+      user's notes page on a local production build is under 500 ms and at
+      least 5x faster than on main, and every note is still reachable from the
+      page
+
+  - id: prisma-7
+    type: migration
+    title: Move the app off Prisma 6
+    description: >-
+      We're still on Prisma 6 for both the database client and the CLI, while
+      Prisma 7 has been the stable major for ten minor releases. Every page
+      that reads or writes data goes through it, and our setup notes have to
+      pin `npx prisma@6` just to seed the database. We want to be on Prisma 7
+      with no change to anyone's data or to how the app behaves.
+    done: >-
+      prisma and @prisma/client are on 7.x (not the 8.x prerelease) and no 6.x
+      copy remains in package-lock.json; setup, seeding without pinning a
+      Prisma version, typecheck and every test that passes on main all pass on
+      the branch; and a database created and seeded on main works on the
+      branch and again on main after switching back, with the same row count
+      in every table

@@ -116,4 +116,4 @@ Failed, cancelled and unknown agents aren't waited on. Plain `status` never wait
 - `prompts/init.md`: the `proofline init` prompt; only `{repo}` is filled in.
 - `prompts/ticket.md`: the ticket prompt template, with `{type} {title} {description} {repro} {done} {evidence} {repo}` placeholders. `{repro}` is required.
 
-A ticket's `{repro}` is its type's override if there is one, otherwise `repro.default`. The shipped config overrides only `feature`, with "write the failing e2e test first." A ticket's evidence is `always` + `by_type[type]` + its own `evidence`, with duplicates removed.
+A ticket's `{repro}` is its type's override if there is one, otherwise `repro.default`. The shipped config overrides `feature`, with "write the failing e2e test first.", and `migration`, with "record the current versions and a passing test run on main first." A ticket's evidence is `always` + `by_type[type]` + its own `evidence`, with duplicates removed.

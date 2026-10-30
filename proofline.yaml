@@ -1,6 +1,7 @@
 repro:
   default: "repro it on main first; if it doesn't repro, stop and say so."
   feature: "write the failing e2e test first."
+  migration: "record the current versions and a passing test run on main first."
 
 evidence:
   always:
