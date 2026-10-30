@@ -1,24 +1,12 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { main } from "../src/cli.js";
+import { CONFIG, TASKS, run as runIn, tempDir } from "./fake.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
-async function run(argv: string[], cwd = root) {
-  let stdout = "";
-  let stderr = "";
-  const code = await main(argv, { cwd, stdout: (t) => (stdout += t), stderr: (t) => (stderr += t) });
-  return { code, stdout, stderr };
-}
-
-async function tempDir(files: Record<string, string>) {
-  const dir = await mkdtemp(join(tmpdir(), "proofline-"));
-  for (const [name, text] of Object.entries(files)) await writeFile(join(dir, name), text);
-  return dir;
-}
+const run = (argv: string[], cwd = root) => runIn(argv, cwd);
 
 describe("proofline run --dry-run", () => {
   it("prints one prompt per sample ticket", async () => {
@@ -80,10 +68,27 @@ describe("proofline run --dry-run", () => {
     expect(stderr).toMatch(/error: tasks\.yaml: file not found/);
   });
 
-  it("refuses to run without --dry-run", async () => {
-    const { code, stderr } = await run(["run"]);
-    expect(code).toBe(2);
-    expect(stderr).toContain("only `proofline run --dry-run` works so far");
+  it("launches nothing, needs no API key, and leaves no run state", async () => {
+    const dir = await tempDir({ "tasks.yaml": TASKS, "proofline.yaml": CONFIG });
+    const result = await runIn(["run", "--dry-run"], dir, { env: {} });
+    expect(result.code).toBe(0);
+    expect(result.launcherCreated).toBe(false);
+    expect(result.launcher.requests).toEqual([]);
+    await expect(access(join(dir, ".proofline"))).rejects.toThrow();
+  });
+
+  it("ignores existing run state, still printing already-launched tickets", async () => {
+    const dir = await tempDir({ "tasks.yaml": TASKS, "proofline.yaml": CONFIG });
+    expect((await runIn(["run"], dir)).code).toBe(0);
+    const { stdout } = await runIn(["run", "--dry-run"], dir);
+    expect(stdout.match(/^===== /gm)).toHaveLength(3);
+  });
+
+  it("prints just the --only tickets", async () => {
+    const dir = await tempDir({ "tasks.yaml": TASKS, "proofline.yaml": CONFIG });
+    const { code, stdout } = await runIn(["run", "--dry-run", "--only", "gamma"], dir);
+    expect(code).toBe(0);
+    expect(stdout.match(/^===== .*$/gm)).toEqual(["===== gamma (bug) ====="]);
   });
 
   it("prints usage for unknown commands and flags", async () => {

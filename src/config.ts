@@ -1,6 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { parseDocument } from "yaml";
-import { TICKET_TYPES, isTicketType, type ProoflineConfig, type Tasks, type Ticket } from "./types.js";
+import {
+  TICKET_TYPES,
+  isTicketType,
+  type ModelChoice,
+  type ProoflineConfig,
+  type Tasks,
+  type Ticket,
+} from "./types.js";
 
 /** One or more problems with the user's files. Each problem is a full, self-contained message. */
 export class ConfigError extends Error {
@@ -12,7 +19,8 @@ export class ConfigError extends Error {
 
 const TASKS_KEYS = ["repo", "tickets"];
 const TICKET_KEYS = ["id", "type", "title", "description", "done", "seeded", "evidence"];
-const CONFIG_KEYS = ["repro", "evidence"];
+const CONFIG_KEYS = ["model", "repro", "evidence"];
+const MODEL_KEYS = ["id", "params"];
 const EVIDENCE_KEYS = ["always", "by_type"];
 const TYPE_LIST = TICKET_TYPES.join(", ");
 
@@ -148,6 +156,32 @@ export function validateConfig(data: unknown, label = "proofline.yaml"): Proofli
     evidence: { always: [], by_type: {} },
     repro: { default: "", overrides: {} },
   };
+
+  // model: either a model id, or { id, params } where params maps knob -> value.
+  const model = data.model;
+  if (typeof model === "string") {
+    if (model.trim()) config.model = { id: model.trim(), params: [] };
+    else problems.push(`${at("model")} must not be empty`);
+  } else if (isRecord(model)) {
+    const modelAt = (field: string) => at(`model.${field}`);
+    unknownKeys(model, MODEL_KEYS, modelAt, problems);
+    const id = text(model, "id", modelAt, problems);
+    const params: ModelChoice["params"] = [];
+    if (model.params !== undefined && !isRecord(model.params)) {
+      problems.push(`${modelAt("params")} must be a mapping of parameter to value (got ${show(model.params)})`);
+    } else {
+      for (const [param, value] of Object.entries(model.params ?? {})) {
+        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+          params.push({ id: param, value: String(value) });
+        } else {
+          problems.push(`${modelAt(`params.${param}`)} must be a string, number or true/false (got ${show(value)})`);
+        }
+      }
+    }
+    if (id !== undefined) config.model = { id: id.trim(), params };
+  } else if (model !== undefined) {
+    problems.push(`${at("model")} must be a model id or a mapping with "id" and "params" (got ${show(model)})`);
+  }
 
   // repro: a required `default` line plus optional overrides keyed by ticket type.
   const repro = data.repro;

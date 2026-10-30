@@ -18,7 +18,15 @@ export interface Tasks {
   tickets: Ticket[];
 }
 
+/** A Cursor model selection; params are model-specific knobs such as `effort: low`. */
+export interface ModelChoice {
+  id: string;
+  params: { id: string; value: string }[];
+}
+
 export interface ProoflineConfig {
+  /** Omitted means the SDK's server-side default model. */
+  model?: ModelChoice;
   evidence: {
     always: string[];
     by_type: Partial<Record<TicketType, string[]>>;

@@ -1,33 +1,48 @@
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { ConfigError, loadConfig, loadTasks } from "./config.js";
+import { API_KEY_VAR, resolveApiKey } from "./env.js";
+import { launchTickets, selectTickets } from "./launch.js";
+import { type Launcher, createCursorLauncher } from "./launcher.js";
 import { loadTemplate, renderAll, type RenderedPrompt } from "./render.js";
+import { type RunState, STATE_PATH, readState, writeState } from "./state.js";
 import type { ProoflineConfig, Tasks } from "./types.js";
 
-export const USAGE = `usage: proofline run --dry-run [--tasks <file>] [--config <file>]
+export const USAGE = `usage: proofline run [--dry-run] [--only <id>]... [--force] [--tasks <file>] [--config <file>]
 
-Reads tasks.yaml and proofline.yaml, validates them, and prints the exact
-prompt each ticket's cloud agent would get. Nothing is sent to Cursor or GitHub.
+Reads tasks.yaml and proofline.yaml, validates them, and starts one Cursor
+cloud agent per ticket on the tasks.yaml repo, from main. Launches are recorded
+in ${STATE_PATH}; tickets already recorded there are skipped.
 
 options:
-  --dry-run         print the prompts instead of launching agents (required for now)
+  --dry-run         print each ticket's exact prompt; launch nothing, need no API key
+  --only <id>       launch just this ticket, even if it was launched before (repeatable)
+  --force           relaunch every ticket, including ones already launched
   --tasks <file>    tickets file (default: tasks.yaml)
-  --config <file>   evidence config (default: proofline.yaml)
-  -h, --help        show this help`;
+  --config <file>   model, repro and evidence config (default: proofline.yaml)
+  -h, --help        show this help
+
+${API_KEY_VAR} is read from the environment, or else from .env.local.`;
 
 export interface Io {
   cwd: string;
+  env: NodeJS.ProcessEnv;
   stdout: (text: string) => void;
   stderr: (text: string) => void;
+  createLauncher: (apiKey: string) => Launcher;
+  now: () => Date;
 }
 
 const processIo: Io = {
   cwd: process.cwd(),
+  env: process.env,
   stdout: (text) => process.stdout.write(text),
   stderr: (text) => process.stderr.write(text),
+  createLauncher: (apiKey) => createCursorLauncher(apiKey),
+  now: () => new Date(),
 };
 
-/** Runs the CLI and returns the exit code: 0 ok, 1 invalid input, 2 bad usage. */
+/** Runs the CLI and returns the exit code: 0 ok, 1 invalid input or a failed launch, 2 bad usage. */
 export async function main(argv: string[], io: Io = processIo): Promise<number> {
   let args: ReturnType<typeof parseCliArgs>;
   try {
@@ -46,28 +61,93 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
     io.stderr(`${USAGE}\n`);
     return 2;
   }
-  if (!values["dry-run"]) {
-    io.stderr("error: only `proofline run --dry-run` works so far; launching agents comes in a later part\n");
-    return 2;
-  }
 
   const tasksLabel = values.tasks ?? "tasks.yaml";
   const configLabel = values.config ?? "proofline.yaml";
-  let tasks: Tasks;
+  let inputs: { tasks: Tasks; config: ProoflineConfig };
   let prompts: RenderedPrompt[];
   try {
-    const inputs = await loadInputs(io.cwd, tasksLabel, configLabel);
-    tasks = inputs.tasks;
-    prompts = renderAll(inputs.template, inputs.tasks, inputs.config, tasksLabel);
+    const loaded = await loadInputs(io.cwd, tasksLabel, configLabel);
+    inputs = loaded;
+    prompts = renderAll(loaded.template, loaded.tasks, loaded.config, tasksLabel);
   } catch (err) {
-    if (!(err instanceof ConfigError)) throw err;
-    io.stderr(err.problems.map((p) => `error: ${p}\n`).join(""));
+    return reportConfigError(err, io);
+  }
+
+  const only = values.only ?? [];
+  const unknown = only.filter((id) => !prompts.some((p) => p.ticket.id === id));
+  if (unknown.length > 0) {
+    io.stderr(unknown.map((id) => `error: --only: no ticket with id "${id}" in ${tasksLabel}\n`).join(""));
+    return 2;
+  }
+
+  if (values["dry-run"]) {
+    const shown = only.length > 0 ? prompts.filter((p) => only.includes(p.ticket.id)) : prompts;
+    io.stdout(shown.map(({ ticket, prompt }) => `===== ${ticket.id} (${ticket.type}) =====\n${prompt}\n`).join("\n"));
+    io.stderr(`\ndry run: ${shown.length} prompt(s) for ${inputs.tasks.repo}; nothing was launched\n`);
+    return 0;
+  }
+
+  return launch(prompts, inputs, { only, force: values.force ?? false }, io);
+}
+
+async function launch(
+  prompts: RenderedPrompt[],
+  { tasks, config }: { tasks: Tasks; config: ProoflineConfig },
+  flags: { only: string[]; force: boolean },
+  io: Io,
+): Promise<number> {
+  let state: RunState;
+  try {
+    state = await readState(io.cwd);
+  } catch (err) {
+    return reportConfigError(err, io);
+  }
+
+  const { toLaunch, skipped } = selectTickets(prompts, state, flags);
+  const skippedLine =
+    skipped.length > 0
+      ? `skipped ${skipped.length} already launched (relaunch with --only <id> or --force): ${skipped.map((p) => p.ticket.id).join(", ")}\n`
+      : "";
+  if (toLaunch.length === 0) {
+    io.stdout(`nothing to launch.\n${skippedLine}`);
+    return 0;
+  }
+
+  const apiKey = await resolveApiKey(io.cwd, io.env);
+  if (!apiKey) {
+    io.stderr(`error: ${API_KEY_VAR} is not set in the environment or in .env.local; nothing was launched\n`);
     return 1;
   }
 
-  io.stdout(prompts.map(({ ticket, prompt }) => `===== ${ticket.id} (${ticket.type}) =====\n${prompt}\n`).join("\n"));
-  io.stderr(`\ndry run: ${prompts.length} prompt(s) for ${tasks.repo}; nothing was launched\n`);
-  return 0;
+  const model = config.model ? config.model.id : "the SDK default model";
+  io.stdout(`launching ${toLaunch.length} agent(s) on ${tasks.repo} from main with ${model}\n`);
+  const outcome = await launchTickets(toLaunch, {
+    repo: tasks.repo,
+    model: config.model,
+    state,
+    launcher: io.createLauncher(apiKey.key),
+    now: io.now,
+    save: (next) => writeState(io.cwd, next),
+    onLaunched: (r) => io.stdout(`  launched ${r.ticketId}: ${r.agentUrl}\n`),
+    onFailed: (id, reason) => io.stdout(`  failed   ${id}: ${reason}\n`),
+  });
+
+  const summary = [
+    `\nlaunched ${outcome.launched.length} of ${toLaunch.length}${outcome.launched.length > 0 ? `; recorded in ${STATE_PATH}` : ""}\n`,
+    skippedLine,
+    outcome.failed.length > 0
+      ? `failed ${outcome.failed.length}:\n${outcome.failed.map((f) => `  ${f.ticketId}: ${f.reason}\n`).join("")}`
+      : "",
+  ];
+  io.stdout(summary.join(""));
+  return outcome.failed.length > 0 ? 1 : 0;
+}
+
+function reportConfigError(err: unknown, io: Io): number {
+  if (!(err instanceof ConfigError)) throw err;
+  io.stderr(err.problems.map((p) => `error: ${p}\n`).join(""));
+  return 1;
 }
 
 function parseCliArgs(argv: string[]) {
@@ -76,6 +156,8 @@ function parseCliArgs(argv: string[]) {
     allowPositionals: true,
     options: {
       "dry-run": { type: "boolean" },
+      only: { type: "string", multiple: true },
+      force: { type: "boolean" },
       tasks: { type: "string" },
       config: { type: "string" },
       help: { type: "boolean", short: "h" },

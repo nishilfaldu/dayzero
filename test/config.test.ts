@@ -124,6 +124,48 @@ describe("validateConfig", () => {
   });
 });
 
+describe("validateConfig model", () => {
+  const base = { repro: { default: "d" }, evidence: { always: ["log"] } };
+
+  it("is optional", () => {
+    expect(validateConfig(base)).not.toHaveProperty("model");
+  });
+
+  it("accepts a bare model id", () => {
+    expect(validateConfig({ ...base, model: " composer-2.5 " }).model).toEqual({ id: "composer-2.5", params: [] });
+  });
+
+  it("accepts an id with params, turning YAML scalars into strings", () => {
+    expect(validateConfig({ ...base, model: { id: "grok-4.5", params: { effort: "low", fast: false, n: 2 } } }).model).toEqual({
+      id: "grok-4.5",
+      params: [
+        { id: "effort", value: "low" },
+        { id: "fast", value: "false" },
+        { id: "n", value: "2" },
+      ],
+    });
+  });
+
+  it("names the field for each kind of bad model", () => {
+    expect(problemsOf(() => validateConfig({ ...base, model: "" }))).toEqual(['proofline.yaml: field "model" must not be empty']);
+    expect(problemsOf(() => validateConfig({ ...base, model: 5 }))).toEqual([
+      expect.stringMatching(/^proofline\.yaml: field "model" must be a model id or a mapping/),
+    ]);
+    expect(problemsOf(() => validateConfig({ ...base, model: { params: { effort: "low" } } }))).toEqual([
+      'proofline.yaml: field "model.id" is required',
+    ]);
+    expect(problemsOf(() => validateConfig({ ...base, model: { id: "m", effort: "low" } }))).toEqual([
+      expect.stringMatching(/^proofline\.yaml: field "model\.effort" is not recognised/),
+    ]);
+    expect(problemsOf(() => validateConfig({ ...base, model: { id: "m", params: ["low"] } }))).toEqual([
+      expect.stringMatching(/^proofline\.yaml: field "model\.params" must be a mapping/),
+    ]);
+    expect(problemsOf(() => validateConfig({ ...base, model: { id: "m", params: { effort: ["low"] } } }))).toEqual([
+      'proofline.yaml: field "model.params.effort" must be a string, number or true/false (got ["low"])',
+    ]);
+  });
+});
+
 describe("validateConfig repro", () => {
   const evidence = { always: ["log"] };
 

@@ -1,0 +1,12 @@
+repo: nishilfaldu/proofline
+
+tickets:
+  - id: smoke-marker
+    type: feature
+    title: Add a smoke-test marker file
+    description: >-
+      Create SMOKE.md at the repo root containing exactly one line:
+      "proofline smoke test". Change nothing else.
+    done: SMOKE.md exists at the repo root with that one line
+    evidence:
+      - the diff adding SMOKE.md

@@ -1,0 +1,8 @@
+# No model: the smoke test also checks the SDK-default fallback.
+
+repro:
+  default: "this is a smoke test, so there is nothing to repro; skip that step."
+
+evidence:
+  always:
+    - the committed decision log
