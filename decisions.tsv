@@ -7,3 +7,4 @@ ts	phase	decision	why	evidence	result
 2026-10-30T19:28:37Z	verify	Read SMOKE.md and compared its 21 bytes to the required line	The check has to read the file, not the writer's report	commit e9756bd SMOKE.md	match
 2026-10-30T19:28:37Z	delegate	Accepted the one-file marker write	The byte compare matched and git status showed no other path from that write	commit e9756bd	accepted
 2026-10-30T19:30:14Z	review	Accepted a comment pass that deleted nothing	The marker line is the feature, and the log rows are the trail, so neither is a comment	SMOKE.md decisions.tsv	0 deletions
+2026-10-30T19:31:11Z	pr	Opened the pull request with the marker and the trail	The ticket asked for both in the review diff, and the byte compare already matched	https://github.com/nishilfaldu/proofline/pull/1	PR 1 open
