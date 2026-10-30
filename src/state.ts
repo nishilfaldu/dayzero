@@ -1,12 +1,15 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { ConfigError } from "./config.js";
+import type { TicketType } from "./types.js";
 
 export const STATE_PATH = join(".proofline", "run.json");
 
 /** One successful launch. Relaunches append a new record; nothing is ever overwritten. */
 export interface LaunchRecord {
   ticketId: string;
+  /** The ticket's type at launch. Missing from records written before types were recorded. */
+  type?: TicketType;
   agentId: string;
   agentUrl: string;
   runId: string;

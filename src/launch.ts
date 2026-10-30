@@ -65,6 +65,7 @@ export async function launchTickets(
       });
       record = {
         ticketId: ticket.id,
+        type: ticket.type,
         agentId: agent.agentId,
         agentUrl: agent.agentUrl,
         runId: agent.runId,

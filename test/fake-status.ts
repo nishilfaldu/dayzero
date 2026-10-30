@@ -4,7 +4,7 @@ import { GitHubAuthError, type GitHub, type IssueComment, type PullFile, type Pu
 /** Snapshots by agent id; an Error entry makes the lookup throw, a missing entry means "not found". */
 export class FakeAgents implements AgentReader {
   readonly lookups: string[] = [];
-  constructor(private readonly agents: Record<string, AgentSnapshot | Error>) {}
+  constructor(public agents: Record<string, AgentSnapshot | Error>) {}
 
   async snapshot(agentId: string): Promise<AgentSnapshot | undefined> {
     this.lookups.push(agentId);

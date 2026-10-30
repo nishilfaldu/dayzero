@@ -11,6 +11,7 @@ npm install
 npm run proofline -- run --dry-run        # print every prompt; no API key, no network
 npm run proofline -- run                  # launch an agent for each ticket not yet launched
 npm run proofline -- status               # agent state + PR per ticket; labels and annotates PRs
+npm run proofline -- status --watch       # same, every 60s until no agent is still running
 npm run build && node dist/bin.js run     # same, from the build
 npm test                                  # uses a fake Cursor client; no network
 npm run smoke                             # manual: one real launch, see below
@@ -25,7 +26,7 @@ npm run smoke                             # manual: one real launch, see below
 
 proofline returns as soon as each agent's first run is accepted. It doesn't wait for the agent to finish.
 
-Each successful launch is appended to `.proofline/run.json` (gitignored) before the next one starts. A record holds the ticket id, agent id, agent URL, run id, launch time, repo, model, and the exact prompt sent.
+Each successful launch is appended to `.proofline/run.json` (gitignored) before the next one starts. A record holds the ticket id and type, agent id, agent URL, run id, launch time, repo, model, and the exact prompt sent.
 
 - **Rerunning** skips tickets that already have a record.
 - **`--only <id>`** (repeatable) launches just those tickets, even if they were launched before.
@@ -46,9 +47,11 @@ Exit codes:
 ```
 TICKET       TYPE      AGENT      PR
 notes-count  feature   finished   https://github.com/nishilfaldu/epic-stack/pull/12
-seeded-idor  security  running    no PR yet (branch cursor/fix-idor-1a2b not pushed yet)
+note-idor    security  running    no PR yet (branch cursor/fix-idor-1a2b not pushed yet)
 other        bug       error      branch cursor/other-9f8e never reached GitHub
 ```
+
+**Type** is the one recorded in `run.json` at launch. Records written before types were recorded fall back to the ticket's type in `tasks.yaml`, which is only read in that case. If neither has it, the type shows as `?` and no label is added.
 
 **Agent state** comes from the agent's newest run, which may be a follow-up started from the Cursor web app. **The branch and PR** come from the newest run that reports them.
 
@@ -63,7 +66,7 @@ If there's no PR, the PR column says why:
 - the agent failed or finished without creating a branch
 
 Once a PR is confirmed, `status` brings it up to date. Running it again changes nothing:
-- **Labels:** the ticket type, plus `seeded` for seeded tickets. Labels are created in the repo if missing, and labels already present aren't re-added.
+- **Label:** the ticket type. It's created in the repo if missing, and isn't re-added if already there.
 - **Description:** a "Prompt sent by proofline" section with the exact prompt is appended, between `<!-- proofline:prompt -->` markers. A later run only replaces that section, and only if it differs.
 - **Test files:** if the PR edits, deletes or renames existing test files, one comment lists them. It's marked `<!-- proofline:test-files -->` and updated in place if the list changes. New test files don't count.
   - A test file is anything under `test/`, `tests/`, `__tests__/`, `spec/`, `specs/`, `e2e/` or `__snapshots__/`.
@@ -71,11 +74,13 @@ Once a PR is confirmed, `status` brings it up to date. Running it again changes 
 
 **Errors:** a failed Cursor or GitHub lookup for one ticket shows in its row and on stderr, and the rest carry on. The exit code is then 1.
 
-**Auth:** GitHub uses `GITHUB_TOKEN` if set, or else `gh auth token`. If there's no token, or GitHub rejects it, `status` stops and says to run `gh auth login`. `CURSOR_API_KEY` is found the same way as for `run`.
+**`--watch`** re-checks every 60 seconds, printing a timestamped table each time. It stops once no agent is still running: every agent has finished, failed, been cancelled, or isn't found. A failed lookup counts as still running, so it gets retried. `run.json` is re-read on every check, so launches made meanwhile are picked up. The exit code is that of the last check.
+
+**Auth:** the GitHub token comes only from `gh auth token`, run with `GH_TOKEN` and `GITHUB_TOKEN` removed from its environment. gh would otherwise print those instead, so the token is always the account `gh auth login` stored. If there's no token, or GitHub rejects it, `status` stops and says to run `gh auth login`. `CURSOR_API_KEY` is found the same way as for `run`.
 
 ## Inputs
 
-- `tasks.yaml`: `repo` plus `tickets`, each with `id`, `type`, `title`, `description` and `done`, and optionally `seeded` and `evidence`. `type` is one of feature, bug, concurrency, perf, migration or security.
+- `tasks.yaml`: `repo` plus `tickets`, each with `id`, `type`, `title`, `description` and `done`, and optionally `evidence`. Any other key is an error. `type` is one of feature, bug, concurrency, perf, migration or security.
 - `proofline.yaml`:
   - `model` (optional): a model id such as `composer-2.5`, or `{id: grok-4.5, params: {effort: low}}`. Without it, the SDK uses your account's default model.
   - `repro.default` (required): the repro line.
@@ -83,7 +88,7 @@ Once a PR is confirmed, `status` brings it up to date. Running it again changes 
   - `evidence.always` (list) and `evidence.by_type` (type → list).
 - `prompts/ticket.md`: the prompt template, with `{type} {title} {description} {repro} {done} {evidence} {repo}` placeholders. `{repro}` is required.
 
-A ticket's `{repro}` is its type's override if there is one, otherwise `repro.default`. The shipped config overrides only `feature`, with "write the failing e2e test first." A ticket's evidence is `always` + `by_type[type]` + its own `evidence`, with duplicates removed. `seeded` is never put in a prompt.
+A ticket's `{repro}` is its type's override if there is one, otherwise `repro.default`. The shipped config overrides only `feature`, with "write the failing e2e test first." A ticket's evidence is `always` + `by_type[type]` + its own `evidence`, with duplicates removed.
 
 ## Smoke test
 

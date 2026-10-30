@@ -19,6 +19,5 @@ tickets:
       A logged-in user can submit the note editor form with another user's
       note id and overwrite that note.
     done: editing a note you don't own returns 403 and leaves the note unchanged
-    seeded: ownership check removed from the note editor action
     evidence:
       - failing test on main, passing on the branch

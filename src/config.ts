@@ -18,7 +18,7 @@ export class ConfigError extends Error {
 }
 
 const TASKS_KEYS = ["repo", "tickets"];
-const TICKET_KEYS = ["id", "type", "title", "description", "done", "seeded", "evidence"];
+const TICKET_KEYS = ["id", "type", "title", "description", "done", "evidence"];
 const CONFIG_KEYS = ["model", "repro", "evidence"];
 const MODEL_KEYS = ["id", "params"];
 const EVIDENCE_KEYS = ["always", "by_type"];
@@ -110,11 +110,6 @@ function validateTicket(item: unknown, index: number, label: string, problems: s
   const title = text(item, "title", at, problems);
   const description = text(item, "description", at, problems);
   const done = text(item, "done", at, problems);
-
-  const seeded = item.seeded;
-  if (seeded !== undefined && typeof seeded !== "string" && typeof seeded !== "boolean") {
-    problems.push(`${at("seeded")} must be a string or true/false (got ${show(seeded)})`);
-  }
   const evidence = item.evidence === undefined ? undefined : textList(item.evidence, "evidence", at, problems);
 
   if (problems.length > before) return undefined;
@@ -124,7 +119,6 @@ function validateTicket(item: unknown, index: number, label: string, problems: s
     title: title!,
     description: description!,
     done: done!,
-    ...(seeded !== undefined && { seeded: seeded as string | boolean }),
     ...(evidence !== undefined && { evidence }),
   };
 }

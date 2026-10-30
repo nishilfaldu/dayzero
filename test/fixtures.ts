@@ -1,7 +1,5 @@
 import type { ProoflineConfig, Ticket } from "../src/types.js";
 
-export const SEEDED = "SEEDED-SECRET-ownership-check-removed";
-
 export function ticket(overrides: Partial<Ticket> = {}): Ticket {
   return {
     id: "t-1",

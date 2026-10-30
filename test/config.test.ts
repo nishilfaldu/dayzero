@@ -24,9 +24,9 @@ function tasksWith(...tickets: unknown[]) {
 }
 
 describe("validateTasks", () => {
-  it("accepts a valid file and keeps seeded and evidence", () => {
-    const tasks = validateTasks(tasksWith({ ...validTicket, seeded: "removed check", evidence: ["video"] }));
-    expect(tasks.tickets[0]).toEqual({ ...validTicket, seeded: "removed check", evidence: ["video"] });
+  it("accepts a valid file and keeps evidence", () => {
+    const tasks = validateTasks(tasksWith({ ...validTicket, evidence: ["video"] }));
+    expect(tasks.tickets[0]).toEqual({ ...validTicket, evidence: ["video"] });
   });
 
   it("names the ticket id and field for a bad type", () => {
@@ -62,9 +62,9 @@ describe("validateTasks", () => {
     ]);
   });
 
-  it("rejects a seeded value that is not a string or boolean", () => {
-    expect(problemsOf(() => validateTasks(tasksWith({ ...validTicket, seeded: ["a"] })))).toEqual([
-      'tasks.yaml: ticket "sec-1": field "seeded" must be a string or true/false (got ["a"])',
+  it("rejects a seeded key like any other unknown key", () => {
+    expect(problemsOf(() => validateTasks(tasksWith({ ...validTicket, seeded: "removed check" })))).toEqual([
+      'tasks.yaml: ticket "sec-1": field "seeded" is not recognised (expected one of id, type, title, description, done, evidence)',
     ]);
   });
 

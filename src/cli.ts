@@ -15,11 +15,13 @@ import { launchTickets, selectTickets } from "./launch.js";
 import { type Launcher, createCursorLauncher } from "./launcher.js";
 import { loadTemplate, renderAll, type RenderedPrompt } from "./render.js";
 import { type RunState, STATE_PATH, readState, writeState } from "./state.js";
-import { type TicketStatus, checkLaunch, latestLaunches } from "./status.js";
+import { type TicketStatus, checkLaunch, latestLaunches, recordedType } from "./status.js";
 import type { ProoflineConfig, Tasks } from "./types.js";
 
+export const WATCH_INTERVAL_MS = 60_000;
+
 export const USAGE = `usage: proofline run [--dry-run] [--only <id>]... [--force] [--tasks <file>] [--config <file>]
-       proofline status [--tasks <file>]
+       proofline status [--watch] [--tasks <file>]
 
 run      Reads tasks.yaml and proofline.yaml, validates them, and starts one Cursor
          cloud agent per ticket on the tasks.yaml repo, from main. Launches are
@@ -32,12 +34,13 @@ options:
   --dry-run         print each ticket's exact prompt; launch nothing, need no API key
   --only <id>       launch just this ticket, even if it was launched before (repeatable)
   --force           relaunch every ticket, including ones already launched
+  --watch           status: re-check every ${WATCH_INTERVAL_MS / 1000}s until no agent is still running
   --tasks <file>    tickets file (default: tasks.yaml)
   --config <file>   model, repro and evidence config (default: proofline.yaml)
   -h, --help        show this help
 
 ${API_KEY_VAR} is read from the environment, or else from .env.local.
-status uses GITHUB_TOKEN if set, or else \`gh auth token\`.`;
+status gets its GitHub token from \`gh auth token\`.`;
 
 export interface Io {
   cwd: string;
@@ -49,6 +52,7 @@ export interface Io {
   createGitHub: (token: string) => GitHub;
   ghAuthToken: () => Promise<string | undefined>;
   now: () => Date;
+  sleep: (ms: number) => Promise<void>;
 }
 
 export const processIo: Io = {
@@ -61,6 +65,7 @@ export const processIo: Io = {
   createGitHub: (token) => createGitHubClient(token),
   ghAuthToken: () => runGhAuthToken(),
   now: () => new Date(),
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 
 /** Runs the CLI and returns the exit code: 0 ok, 1 invalid input or a failed launch or lookup, 2 bad usage. */
@@ -85,10 +90,14 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
       io.stderr(`error: ${runOnly.map((f) => `--${f}`).join(", ")} only applies to \`proofline run\`\n\n${USAGE}\n`);
       return 2;
     }
-    return status(values.tasks ?? "tasks.yaml", io);
+    return status(values.tasks ?? "tasks.yaml", values.watch ?? false, io);
   }
   if (command !== "run") {
     io.stderr(`${USAGE}\n`);
+    return 2;
+  }
+  if (values.watch) {
+    io.stderr(`error: --watch only applies to \`proofline status\`\n\n${USAGE}\n`);
     return 2;
   }
 
@@ -174,16 +183,17 @@ async function launch(
   return outcome.failed.length > 0 ? 1 : 0;
 }
 
-async function status(tasksLabel: string, io: Io): Promise<number> {
-  let state: RunState;
-  let tasks: Tasks;
+type StatusClients = { agents: AgentReader; github: GitHub };
+
+/** Agent states that can still change, so --watch keeps going while any ticket has one. */
+const NOT_DONE = new Set(["running", "lookup failed"]);
+
+async function status(tasksLabel: string, watch: boolean, io: Io): Promise<number> {
   try {
-    state = await readState(io.cwd);
-    if (state.launches.length === 0) {
+    if ((await readState(io.cwd)).launches.length === 0) {
       io.stdout(`nothing launched yet (${STATE_PATH} has no launches); run \`proofline run\` first\n`);
       return 0;
     }
-    tasks = await loadTasks(resolve(io.cwd, tasksLabel), tasksLabel);
   } catch (err) {
     return reportConfigError(err, io);
   }
@@ -193,31 +203,57 @@ async function status(tasksLabel: string, io: Io): Promise<number> {
     io.stderr(`error: ${API_KEY_VAR} is not set in the environment or in .env.local\n`);
     return 1;
   }
-  const token = await resolveGitHubToken(io.env, io.ghAuthToken);
+  const token = await resolveGitHubToken(io.ghAuthToken);
   if (!token) {
-    io.stderr(`error: no GitHub token: GITHUB_TOKEN is not set and \`gh auth token\` gave none; ${LOGIN_HINT}\n`);
+    io.stderr(`error: no GitHub token: \`gh auth token\` gave none; ${LOGIN_HINT}\n`);
     return 1;
   }
+  const clients: StatusClients = { agents: io.createAgentReader(apiKey.key), github: io.createGitHub(token) };
 
-  const clients = { agents: io.createAgentReader(apiKey.key), github: io.createGitHub(token.token) };
-  const tickets = new Map(tasks.tickets.map((t) => [t.id, t]));
-  const statuses: TicketStatus[] = [];
-  try {
-    for (const launch of latestLaunches(state)) {
-      statuses.push(await checkLaunch(launch, tickets.get(launch.ticketId), clients));
+  for (let check = 1; ; check++) {
+    let statuses: TicketStatus[];
+    try {
+      // Re-read every check, so --watch picks up launches made while it runs.
+      statuses = await checkAll(await readState(io.cwd), tasksLabel, io.cwd, clients);
+    } catch (err) {
+      if (!(err instanceof GitHubAuthError)) return reportConfigError(err, io);
+      io.stderr(`error: ${err.message}; ${LOGIN_HINT}\n`);
+      return 1;
     }
-  } catch (err) {
-    if (!(err instanceof GitHubAuthError)) throw err;
-    io.stderr(`error: ${err.message} (token from ${token.source}); ${LOGIN_HINT}\n`);
-    return 1;
-  }
 
-  io.stdout(table([["TICKET", "TYPE", "AGENT", "PR"], ...statuses.map((s) => [s.ticketId, s.type, s.agent, s.pr])]));
-  const details = statuses.flatMap((s) => [...s.changes, ...s.notes].map((line) => `  ${s.ticketId}: ${line}\n`));
-  if (details.length > 0) io.stdout(`\n${details.join("")}`);
-  const problems = statuses.flatMap((s) => s.problems.map((p) => `error: ${s.ticketId}: ${p}\n`));
-  if (problems.length > 0) io.stderr(`\n${problems.join("")}`);
-  return problems.length > 0 ? 1 : 0;
+    if (watch) io.stdout(`${check > 1 ? "\n" : ""}[${io.now().toISOString()}] check ${check}\n`);
+    io.stdout(table([["TICKET", "TYPE", "AGENT", "PR"], ...statuses.map((s) => [s.ticketId, s.type, s.agent, s.pr])]));
+    const details = statuses.flatMap((s) => [...s.changes, ...s.notes].map((line) => `  ${s.ticketId}: ${line}\n`));
+    if (details.length > 0) io.stdout(`\n${details.join("")}`);
+    const problems = statuses.flatMap((s) => s.problems.map((p) => `error: ${s.ticketId}: ${p}\n`));
+    if (problems.length > 0) io.stderr(`\n${problems.join("")}`);
+
+    const waiting = statuses.filter((s) => NOT_DONE.has(s.agent)).map((s) => s.ticketId);
+    if (!watch || waiting.length === 0) {
+      if (watch) io.stdout("\nno agent is still running; done watching\n");
+      return problems.length > 0 ? 1 : 0;
+    }
+    io.stdout(`\nstill running: ${waiting.join(", ")}; checking again in ${WATCH_INTERVAL_MS / 1000}s\n`);
+    await io.sleep(WATCH_INTERVAL_MS);
+  }
+}
+
+/** Uses each launch's recorded type; tasks.yaml is read only if an older record lacks one. */
+async function checkAll(
+  state: RunState,
+  tasksLabel: string,
+  cwd: string,
+  clients: StatusClients,
+): Promise<TicketStatus[]> {
+  const launches = latestLaunches(state);
+  const fallback = launches.some((l) => !recordedType(l))
+    ? new Map((await loadTasks(resolve(cwd, tasksLabel), tasksLabel)).tickets.map((t) => [t.id, t.type]))
+    : undefined;
+  const statuses: TicketStatus[] = [];
+  for (const launch of launches) {
+    statuses.push(await checkLaunch(launch, recordedType(launch) ?? fallback?.get(launch.ticketId), clients));
+  }
+  return statuses;
 }
 
 /** Left-aligned columns, two spaces apart; the last column isn't padded. */
@@ -243,6 +279,7 @@ function parseCliArgs(argv: string[]) {
       "dry-run": { type: "boolean" },
       only: { type: "string", multiple: true },
       force: { type: "boolean" },
+      watch: { type: "boolean" },
       tasks: { type: "string" },
       config: { type: "string" },
       help: { type: "boolean", short: "h" },

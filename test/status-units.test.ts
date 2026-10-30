@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { type CursorRunsSdk, createCursorReader } from "../src/agents.js";
-import { GitHubAuthError, createGitHubClient, parsePullUrl, resolveGitHubToken } from "../src/github.js";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { GitHubAuthError, createGitHubClient, parsePullUrl, resolveGitHubToken, runGhAuthToken } from "../src/github.js";
 import {
   PROMPT_END,
   PROMPT_START,
@@ -85,10 +88,49 @@ describe("parsePullUrl", () => {
 });
 
 describe("resolveGitHubToken", () => {
-  it("prefers GITHUB_TOKEN, then gh, else undefined", async () => {
-    expect(await resolveGitHubToken({ GITHUB_TOKEN: "e" }, async () => "g")).toEqual({ token: "e", source: "GITHUB_TOKEN" });
-    expect(await resolveGitHubToken({}, async () => "g\n")).toEqual({ token: "g", source: "gh auth token" });
-    expect(await resolveGitHubToken({ GITHUB_TOKEN: "" }, async () => undefined)).toBeUndefined();
+  it("is whatever `gh auth token` prints, trimmed, or undefined", async () => {
+    expect(await resolveGitHubToken(async () => "g\n")).toBe("g");
+    expect(await resolveGitHubToken(async () => " ")).toBeUndefined();
+    expect(await resolveGitHubToken(async () => undefined)).toBeUndefined();
+  });
+});
+
+describe("runGhAuthToken", () => {
+  // A stand-in `gh` on PATH that reports which token it would have used.
+  async function withFakeGh<T>(fn: () => Promise<T>): Promise<T> {
+    const dir = await mkdtemp(join(tmpdir(), "proofline-gh-"));
+    const gh = join(dir, "gh");
+    await writeFile(gh, '#!/bin/sh\necho "${GH_TOKEN:-${GITHUB_TOKEN:-stored-login-token}}"\n');
+    await chmod(gh, 0o755);
+    const saved = { PATH: process.env.PATH, GH_TOKEN: process.env.GH_TOKEN, GITHUB_TOKEN: process.env.GITHUB_TOKEN };
+    process.env.PATH = `${dir}:${saved.PATH}`;
+    try {
+      return await fn();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  }
+
+  it("ignores GITHUB_TOKEN and GH_TOKEN, so the token is gh's stored login", async () => {
+    const token = await withFakeGh(async () => {
+      process.env.GITHUB_TOKEN = "env-github-token";
+      process.env.GH_TOKEN = "env-gh-token";
+      return runGhAuthToken();
+    });
+    expect(token?.trim()).toBe("stored-login-token");
+  });
+
+  it("returns undefined when gh fails", async () => {
+    const saved = process.env.PATH;
+    process.env.PATH = "/nonexistent";
+    try {
+      expect(await runGhAuthToken()).toBeUndefined();
+    } finally {
+      process.env.PATH = saved;
+    }
   });
 });
 
@@ -186,12 +228,12 @@ describe("createGitHubClient", () => {
 
   it("creates a missing label, tolerating a race where it already exists", async () => {
     const { fetchImpl, calls } = fakeFetch({ "POST /repos/acme/app/labels": { status: 422, body: { message: "already_exists" } } });
-    await createGitHubClient("t", fetchImpl).ensureLabel("acme/app", "seeded", "b60205");
+    await createGitHubClient("t", fetchImpl).ensureLabel("acme/app", "security", "ededed");
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
-      "GET https://api.github.com/repos/acme/app/labels/seeded",
+      "GET https://api.github.com/repos/acme/app/labels/security",
       "POST https://api.github.com/repos/acme/app/labels",
     ]);
-    expect(calls[1]!.body).toEqual({ name: "seeded", color: "b60205" });
+    expect(calls[1]!.body).toEqual({ name: "security", color: "ededed" });
   });
 
   it("skips creating a label that exists", async () => {

@@ -2,7 +2,7 @@ import type { AgentReader, AgentSnapshot } from "./agents.js";
 import { GitHubAuthError, type GitHub, type PullFile, type PullRequest, parsePullUrl } from "./github.js";
 import { describeError } from "./launch.js";
 import type { LaunchRecord, RunState } from "./state.js";
-import type { Ticket } from "./types.js";
+import { type TicketType, isTicketType } from "./types.js";
 
 export interface TicketStatus {
   ticketId: string;
@@ -21,9 +21,7 @@ export interface TicketStatus {
 export const PROMPT_START = "<!-- proofline:prompt -->";
 export const PROMPT_END = "<!-- /proofline:prompt -->";
 export const TEST_FILES_MARKER = "<!-- proofline:test-files -->";
-export const SEEDED_LABEL = "seeded";
-const LABEL_COLORS: Record<string, string> = { [SEEDED_LABEL]: "b60205" };
-const DEFAULT_LABEL_COLOR = "ededed";
+const LABEL_COLOR = "ededed";
 
 /** The newest launch per ticket, in the order tickets were first launched. */
 export function latestLaunches(state: RunState): LaunchRecord[] {
@@ -36,21 +34,27 @@ export function latestLaunches(state: RunState): LaunchRecord[] {
   return firstSeen.map((id) => latest.get(id)!);
 }
 
+/** The type recorded at launch; records from before types were recorded have none. */
+export function recordedType(launch: LaunchRecord): TicketType | undefined {
+  return isTicketType(launch.type) ? launch.type : undefined;
+}
+
+/** `type` is the recorded type, or for old records the ticket's type in tasks.yaml, if it's still there. */
 export async function checkLaunch(
   launch: LaunchRecord,
-  ticket: Ticket | undefined,
+  type: TicketType | undefined,
   clients: { agents: AgentReader; github: GitHub },
 ): Promise<TicketStatus> {
   const status: TicketStatus = {
     ticketId: launch.ticketId,
-    type: ticket?.type ?? "?",
+    type: type ?? "?",
     agent: "?",
     pr: "-",
     changes: [],
     notes: [],
     problems: [],
   };
-  if (!ticket) status.notes.push("no longer in tasks.yaml, so no labels are added");
+  if (!type) status.notes.push("type unknown (not recorded at launch, and not in tasks.yaml), so no label is added");
 
   let snapshot: AgentSnapshot | undefined;
   try {
@@ -75,7 +79,7 @@ export async function checkLaunch(
       return status;
     }
     status.pr = `${pull.url}${pull.merged ? " (merged)" : pull.state === "closed" ? " (closed)" : ""}`;
-    await syncPull(pull, launch, ticket, clients.github, status);
+    await syncPull(pull, launch, type, clients.github, status);
   } catch (err) {
     if (err instanceof GitHubAuthError) throw err;
     status.problems.push(`GitHub: ${describeError(err)}`);
@@ -122,18 +126,14 @@ async function describeMissingPull(repo: string, snapshot: AgentSnapshot, github
 async function syncPull(
   pull: PullRequest,
   launch: LaunchRecord,
-  ticket: Ticket | undefined,
+  type: TicketType | undefined,
   github: GitHub,
   status: TicketStatus,
 ): Promise<void> {
-  if (ticket) {
-    const wanted = [ticket.type, ...(ticket.seeded ? [SEEDED_LABEL] : [])];
-    const missing = wanted.filter((label) => !pull.labels.includes(label));
-    if (missing.length > 0) {
-      for (const label of missing) await github.ensureLabel(pull.repo, label, LABEL_COLORS[label] ?? DEFAULT_LABEL_COLOR);
-      await github.addLabels(pull.repo, pull.number, missing);
-      status.changes.push(`labelled ${missing.join(", ")}`);
-    }
+  if (type && !pull.labels.includes(type)) {
+    await github.ensureLabel(pull.repo, type, LABEL_COLOR);
+    await github.addLabels(pull.repo, pull.number, [type]);
+    status.changes.push(`labelled ${type}`);
   }
 
   const body = upsertPromptSection(pull.body, promptSection(launch));

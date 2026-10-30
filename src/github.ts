@@ -39,7 +39,7 @@ export interface GitHub {
   updateComment(repo: string, commentId: number, body: string): Promise<void>;
 }
 
-export const LOGIN_HINT = "run `gh auth login`, or set GITHUB_TOKEN";
+export const LOGIN_HINT = "run `gh auth login`";
 
 /** GitHub rejected the token. Stops the whole command, since every later call would fail the same way. */
 export class GitHubAuthError extends Error {
@@ -49,25 +49,21 @@ export class GitHubAuthError extends Error {
   }
 }
 
-export interface GitHubToken {
-  token: string;
-  source: "GITHUB_TOKEN" | "gh auth token";
-}
-
-/** GITHUB_TOKEN from the environment wins; otherwise ask the gh CLI. Undefined if neither has one. */
+/** The token from `gh auth token`, or undefined if gh has none. */
 export async function resolveGitHubToken(
-  env: NodeJS.ProcessEnv,
   ghAuthToken: () => Promise<string | undefined> = runGhAuthToken,
-): Promise<GitHubToken | undefined> {
-  const fromEnv = env.GITHUB_TOKEN?.trim();
-  if (fromEnv) return { token: fromEnv, source: "GITHUB_TOKEN" };
-  const fromGh = (await ghAuthToken())?.trim();
-  return fromGh ? { token: fromGh, source: "gh auth token" } : undefined;
+): Promise<string | undefined> {
+  return (await ghAuthToken())?.trim() || undefined;
 }
 
+/**
+ * gh itself prints GH_TOKEN or GITHUB_TOKEN when either is set, so they're removed here:
+ * the token always comes from the account `gh auth login` stored.
+ */
 export async function runGhAuthToken(): Promise<string | undefined> {
+  const { GH_TOKEN: _gh, GITHUB_TOKEN: _github, ...env } = process.env;
   try {
-    const { stdout } = await promisify(execFile)("gh", ["auth", "token"], { timeout: 10_000 });
+    const { stdout } = await promisify(execFile)("gh", ["auth", "token"], { timeout: 10_000, env });
     return stdout;
   } catch {
     // gh missing, not logged in, or timed out: all mean "no token from gh".

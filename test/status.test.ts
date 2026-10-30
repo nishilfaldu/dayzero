@@ -1,14 +1,23 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { LaunchRecord } from "../src/state.js";
+import type { TicketType } from "../src/types.js";
 import { PROMPT_END, PROMPT_START, TEST_FILES_MARKER, promptSection } from "../src/status.js";
 import { TASKS, run, tempDir } from "./fake.js";
 import { FakeAgents, FakeGitHub } from "./fake-status.js";
 
-function launch(ticketId: string, agentId: string, prompt = `prompt for ${ticketId}`): LaunchRecord {
+/** A record as `proofline run` writes it now; pass `type: null` for one from before types were recorded. */
+function launch(
+  ticketId: string,
+  agentId: string,
+  prompt = `prompt for ${ticketId}`,
+  type: TicketType | null | undefined = TYPES[ticketId],
+): LaunchRecord {
   return {
     ticketId,
+    ...(type && { type }),
     agentId,
     agentUrl: `https://cursor.com/agents/${agentId}`,
     runId: `run-${agentId}`,
@@ -18,6 +27,8 @@ function launch(ticketId: string, agentId: string, prompt = `prompt for ${ticket
     prompt,
   };
 }
+
+const TYPES: Record<string, TicketType> = { alpha: "feature", beta: "security", gamma: "bug" };
 
 async function project(launches: LaunchRecord[], tasks = TASKS) {
   const dir = await tempDir({ "tasks.yaml": tasks });
@@ -52,7 +63,7 @@ describe("proofline status table", () => {
       ].join("\n"),
     );
     expect(stdout).toContain("  gamma: agent error: unexpected error\n");
-    expect(stdout).toContain("  delta: no longer in tasks.yaml, so no labels are added\n");
+    expect(stdout).toContain("  delta: type unknown (not recorded at launch, and not in tasks.yaml), so no label is added\n");
     expect(stdout).toContain("  eps: Cursor has no agent bc-e\n");
   });
 
@@ -152,14 +163,14 @@ describe("updating the PR", () => {
     return { github, agents, alphaPull, betaPull };
   }
 
-  it("labels the PR with the ticket type, plus seeded for seeded tickets", async () => {
+  it("labels the PR with the ticket type, creating the label if the repo lacks it", async () => {
     const dir = await project([launch("alpha", "bc-a"), launch("beta", "bc-b")]);
     const { github, agents, alphaPull, betaPull } = setup();
     const { stdout } = await run(["status"], dir, { agents, github });
     expect(alphaPull.labels).toEqual(["feature"]);
-    expect(betaPull.labels).toEqual(["security", "seeded"]);
-    expect(github.writes).toContain("createLabel acme/app seeded #b60205");
-    expect(stdout).toContain("  beta: labelled security, seeded\n");
+    expect(betaPull.labels).toEqual(["security"]);
+    expect(github.writes).toContain("createLabel acme/app security #ededed");
+    expect(stdout).toContain("  beta: labelled security\n");
   });
 
   it("appends the exact prompt the agent got, keeping the existing description", async () => {
@@ -216,7 +227,7 @@ describe("updating the PR", () => {
     expect(alphaPull.body).toBe(afterFirst.body);
     expect(alphaPull.body.split(PROMPT_START)).toHaveLength(2);
     expect(alphaPull.labels).toEqual(["feature"]);
-    expect(betaPull.labels).toEqual(["security", "seeded"]);
+    expect(betaPull.labels).toEqual(["security"]);
     expect(alphaPull.comments).toHaveLength(1);
     expect(second.stdout.split("\n\n")[1] ?? "").not.toMatch(/labelled|added the prompt|commented/);
   });
@@ -245,9 +256,9 @@ describe("updating the PR", () => {
   it("doesn't re-add a label someone already put on the PR", async () => {
     const dir = await project([launch("beta", "bc-b")]);
     const { github, agents, betaPull } = setup();
-    betaPull.labels.push("seeded");
+    betaPull.labels.push("security");
     await run(["status"], dir, { agents, github });
-    expect(github.writes.filter((w) => w.startsWith("addLabels"))).toEqual(["addLabels acme/app#2 security"]);
+    expect(github.writes.filter((w) => w.includes("abel"))).toEqual([]);
   });
 
   it("replaces a stale prompt section instead of adding a second one, keeping text after it", async () => {
@@ -269,12 +280,160 @@ describe("updating the PR", () => {
     expect(github.writes.filter((w) => w.startsWith("setPullBody"))).toEqual([]);
   });
 
-  it("still adds the prompt for a ticket no longer in tasks.yaml, but no labels", async () => {
-    const dir = await project([launch("alpha", "bc-a")], "repo: acme/app\ntickets:\n  - {id: other, type: bug, title: T, description: D, done: X}\n");
+  it("still adds the prompt for an untyped old record whose ticket left tasks.yaml, but no label", async () => {
+    const otherTasks = "repo: acme/app\ntickets:\n  - {id: other, type: bug, title: T, description: D, done: X}\n";
+    const dir = await project([launch("alpha", "bc-a", "p", null)], otherTasks);
     const { github, agents, alphaPull } = setup();
-    await run(["status"], dir, { agents, github });
+    const { stdout } = await run(["status"], dir, { agents, github });
     expect(alphaPull.labels).toEqual([]);
     expect(alphaPull.body).toContain(PROMPT_START);
+    expect(stdout).toContain("alpha   ?     finished");
+  });
+});
+
+describe("ticket type", () => {
+  const agents = () => new FakeAgents({ "bc-a": { state: "finished", branch: "a" } });
+
+  it("uses the type recorded at launch, even when tasks.yaml now says otherwise", async () => {
+    const retyped = TASKS.replace("{id: alpha, type: feature", "{id: alpha, type: perf");
+    const dir = await project([launch("alpha", "bc-a")], retyped);
+    const github = new FakeGitHub();
+    const pull = github.addPull({ number: 1, headRef: "a" });
+    const { stdout } = await run(["status"], dir, { agents: agents(), github });
+    expect(stdout).toContain("alpha   feature  finished");
+    expect(pull.labels).toEqual(["feature"]);
+  });
+
+  it("doesn't need tasks.yaml when every record has a type", async () => {
+    const dir = await project([launch("alpha", "bc-a")]);
+    await rm(join(dir, "tasks.yaml"));
+    const github = new FakeGitHub();
+    const pull = github.addPull({ number: 1, headRef: "a" });
+    const { code } = await run(["status"], dir, { agents: agents(), github });
+    expect(code).toBe(0);
+    expect(pull.labels).toEqual(["feature"]);
+  });
+
+  it("falls back to tasks.yaml for records written before types were recorded", async () => {
+    const dir = await project([launch("alpha", "bc-a", "p", null)]);
+    const github = new FakeGitHub();
+    const pull = github.addPull({ number: 1, headRef: "a" });
+    const { stdout } = await run(["status"], dir, { agents: agents(), github });
+    expect(stdout).toContain("alpha   feature  finished");
+    expect(pull.labels).toEqual(["feature"]);
+  });
+
+  it("treats a hand-edited, invalid type like a missing one", async () => {
+    const record = { ...launch("alpha", "bc-a"), type: "chore" } as unknown as LaunchRecord;
+    const dir = await project([record]);
+    const github = new FakeGitHub();
+    const pull = github.addPull({ number: 1, headRef: "a" });
+    await run(["status"], dir, { agents: agents(), github });
+    expect(pull.labels).toEqual(["feature"]);
+  });
+
+  it("reports a broken tasks.yaml only when an old record needs it", async () => {
+    const typed = await project([launch("alpha", "bc-a")], "not: [valid");
+    expect((await run(["status"], typed, { agents: agents() })).code).toBe(0);
+    const untyped = await project([launch("alpha", "bc-a", "p", null)], "not: [valid");
+    const { code, stderr } = await run(["status"], untyped, { agents: agents() });
+    expect(code).toBe(1);
+    expect(stderr).toContain("tasks.yaml: invalid YAML");
+  });
+});
+
+describe("--watch", () => {
+  it("re-checks every 60s, printing the table each time, until no agent is running", async () => {
+    const dir = await project(ALL);
+    const agents = new FakeAgents({
+      "bc-a": { state: "running" },
+      "bc-b": { state: "running" },
+      "bc-g": { state: "finished" },
+    });
+    const onSleep = (_ms: number, count: number) => {
+      if (count === 1) agents.agents["bc-a"] = { state: "finished" };
+      if (count === 2) agents.agents["bc-b"] = { state: "error" };
+    };
+    const { code, stdout, sleeps } = await run(["status", "--watch"], dir, { agents, onSleep });
+    expect(code).toBe(0);
+    expect(sleeps).toEqual([60_000, 60_000]);
+    expect(stdout.match(/^TICKET {2}TYPE/gm)).toHaveLength(3);
+    expect(stdout).toContain("[2026-10-30T12:00:00.000Z] check 1\n");
+    expect(stdout).toContain("[2026-10-30T12:00:00.000Z] check 3\n");
+    expect(stdout).toContain("still running: alpha, beta; checking again in 60s\n");
+    expect(stdout).toContain("still running: beta; checking again in 60s\n");
+    expect(stdout.endsWith("no agent is still running; done watching\n")).toBe(true);
+  });
+
+  it("stops after one check when nothing is running", async () => {
+    const dir = await project(ALL);
+    const agents = new FakeAgents({ "bc-a": { state: "finished" }, "bc-b": { state: "cancelled" } });
+    const { code, stdout, sleeps } = await run(["status", "--watch"], dir, { agents });
+    expect(code).toBe(0);
+    expect(sleeps).toEqual([]);
+    expect(stdout).toContain("gamma   bug       not found");
+    expect(stdout).toContain("done watching");
+  });
+
+  it("keeps watching through a failed lookup, and exits 0 once it recovers", async () => {
+    const dir = await project([launch("alpha", "bc-a")]);
+    const agents = new FakeAgents({ "bc-a": new Error("socket hang up") });
+    const onSleep = () => {
+      agents.agents["bc-a"] = { state: "finished" };
+    };
+    const { code, sleeps, stderr } = await run(["status", "--watch"], dir, { agents, onSleep });
+    expect(sleeps).toHaveLength(1);
+    expect(stderr).toContain("socket hang up");
+    expect(code).toBe(0);
+  });
+
+  it("picks up launches made while it watches", async () => {
+    const dir = await project([launch("alpha", "bc-a")]);
+    const agents = new FakeAgents({ "bc-a": { state: "running" }, "bc-b": { state: "running" } });
+    const onSleep = (_ms: number, count: number) => {
+      if (count === 1) {
+        writeFileSync(join(dir, ".proofline", "run.json"), JSON.stringify({ launches: [launch("alpha", "bc-a"), launch("beta", "bc-b")] }));
+        agents.agents["bc-a"] = { state: "finished" };
+      }
+      if (count === 2) agents.agents["bc-b"] = { state: "finished" };
+    };
+    const { stdout, sleeps } = await run(["status", "--watch"], dir, { agents, onSleep });
+    expect(sleeps).toHaveLength(2);
+    expect(stdout).toContain("still running: beta;");
+  });
+
+  it("updates a PR that appears mid-watch once, not on every check", async () => {
+    const dir = await project([launch("alpha", "bc-a")]);
+    const github = new FakeGitHub();
+    const agents = new FakeAgents({ "bc-a": { state: "running", branch: "a" } });
+    const onSleep = (_ms: number, count: number) => {
+      if (count === 1) github.addPull({ number: 1, headRef: "a" });
+      if (count === 3) agents.agents["bc-a"] = { state: "finished", branch: "a" };
+    };
+    const { sleeps, stdout } = await run(["status", "--watch"], dir, { agents, github, onSleep });
+    expect(sleeps).toHaveLength(3);
+    expect(github.writes).toEqual(["createLabel acme/app feature #ededed", "addLabels acme/app#1 feature", "setPullBody acme/app#1"]);
+    expect(stdout.match(/labelled feature/g)).toHaveLength(1);
+  });
+
+  it("stops at once if GitHub rejects the token", async () => {
+    const dir = await project([launch("alpha", "bc-a")]);
+    const github = new FakeGitHub();
+    const agents = new FakeAgents({ "bc-a": { state: "running", branch: "a" } });
+    const onSleep = () => {
+      github.rejectToken = true;
+    };
+    const { code, sleeps, stderr } = await run(["status", "--watch"], dir, { agents, github, onSleep });
+    expect(code).toBe(1);
+    expect(sleeps).toHaveLength(1);
+    expect(stderr).toContain("run `gh auth login`");
+  });
+
+  it("is rejected by run", async () => {
+    const dir = await project([]);
+    const { code, stderr } = await run(["run", "--watch"], dir);
+    expect(code).toBe(2);
+    expect(stderr).toContain("--watch only applies to `proofline status`");
   });
 });
 
@@ -311,7 +470,7 @@ describe("failures", () => {
     const { code, stderr } = await run(["status"], dir, { agents, github });
     expect(code).toBe(1);
     expect(stderr).toContain("error: alpha: GitHub: GitHub GET /repos/acme/app/pulls/404 failed: 502");
-    expect(betaPull.labels).toEqual(["security", "seeded"]);
+    expect(betaPull.labels).toEqual(["security"]);
   });
 });
 
@@ -325,19 +484,21 @@ describe("auth", () => {
     expect(githubTokens).toEqual(["from-gh"]);
   });
 
-  it("lets GITHUB_TOKEN override gh", async () => {
+  it("ignores GITHUB_TOKEN in the environment", async () => {
     const dir = await project([launch("alpha", "bc-a")]);
     const env = { CURSOR_API_KEY: "k", GITHUB_TOKEN: "from-env" };
     const { githubTokens } = await run(["status"], dir, { agents: agents(), env, ghToken: "from-gh" });
-    expect(githubTokens).toEqual(["from-env"]);
+    expect(githubTokens).toEqual(["from-gh"]);
+    const noGh = await run(["status"], dir, { agents: agents(), env, ghToken: undefined });
+    expect(noGh.code).toBe(1);
+    expect(noGh.githubTokens).toEqual([]);
   });
 
-  it("fails with a `gh auth login` hint when there is no token at all", async () => {
+  it("fails with a `gh auth login` hint when gh has no token", async () => {
     const dir = await project([launch("alpha", "bc-a")]);
-    const env = { CURSOR_API_KEY: "k", GITHUB_TOKEN: " " };
-    const result = await run(["status"], dir, { agents: agents(), env, ghToken: "" });
+    const result = await run(["status"], dir, { agents: agents(), ghToken: "" });
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain("run `gh auth login`");
+    expect(result.stderr).toBe("error: no GitHub token: `gh auth token` gave none; run `gh auth login`\n");
     expect(result.githubTokens).toEqual([]);
     const noGh = await run(["status"], dir, { agents: agents(), ghToken: undefined });
     expect(noGh.code).toBe(1);
@@ -355,7 +516,7 @@ describe("auth", () => {
     const { code, stdout, stderr } = await run(["status"], dir, { agents: agentsWithBranches, github });
     expect(code).toBe(1);
     expect(stderr).toBe(
-      "error: GitHub rejected the token (401 on GET /repos/acme/app) (token from gh auth token); run `gh auth login`, or set GITHUB_TOKEN\n",
+      "error: GitHub rejected the token (401 on GET /repos/acme/app); run `gh auth login`\n",
     );
     expect(stdout).toBe("");
     expect(agentsWithBranches.lookups).toEqual(["bc-a"]);

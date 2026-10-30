@@ -8,8 +8,6 @@ export interface Ticket {
   title: string;
   description: string;
   done: string;
-  /** How the bug was planted, for later verification. Never shown to the agent. */
-  seeded?: string | boolean;
   evidence?: string[];
 }
 

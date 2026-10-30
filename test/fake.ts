@@ -29,6 +29,8 @@ export interface RunOptions {
   github?: FakeGitHub;
   /** What `gh auth token` prints; undefined means gh fails. */
   ghToken?: string;
+  /** Called on each --watch pause, before it returns; use it to change what the fakes report. */
+  onSleep?: (ms: number, count: number) => void;
 }
 
 export async function run(argv: string[], cwd: string, options: RunOptions = {}) {
@@ -44,6 +46,7 @@ export async function run(argv: string[], cwd: string, options: RunOptions = {})
   let stderr = "";
   let launcherCreated = false;
   const githubTokens: string[] = [];
+  const sleeps: number[] = [];
   const cursorKeys: string[] = [];
   const io: Io = {
     cwd,
@@ -69,9 +72,14 @@ export async function run(argv: string[], cwd: string, options: RunOptions = {})
     },
     ghAuthToken: async () => ghToken,
     now: () => NOW,
+    sleep: async (ms) => {
+      sleeps.push(ms);
+      if (sleeps.length > 50) throw new Error("--watch never stopped");
+      options.onSleep?.(ms, sleeps.length);
+    },
   };
   const code = await main(argv, io);
-  return { code, stdout, stderr, launcher, launcherCreated, githubTokens, cursorKeys };
+  return { code, stdout, stderr, launcher, launcherCreated, githubTokens, cursorKeys, sleeps };
 }
 
 export async function tempDir(files: Record<string, string>) {
@@ -83,7 +91,7 @@ export async function tempDir(files: Record<string, string>) {
 export const TASKS = `repo: acme/app
 tickets:
   - {id: alpha, type: feature, title: Add alpha, description: Alpha please., done: alpha shows}
-  - {id: beta, type: security, title: Fix beta, description: Beta leaks., done: beta is closed, seeded: planted beta leak}
+  - {id: beta, type: security, title: Fix beta, description: Beta leaks., done: beta is closed}
   - {id: gamma, type: bug, title: Fix gamma, description: Gamma crashes., done: gamma works}
 `;
 

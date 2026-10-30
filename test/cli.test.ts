@@ -17,13 +17,6 @@ describe("proofline run --dry-run", () => {
     expect(stderr).toContain("dry run: 2 prompt(s) for nishilfaldu/epic-stack; nothing was launched");
   });
 
-  it("never prints the sample's seeded text", async () => {
-    const tasks = await readFile(join(root, "tasks.yaml"), "utf8");
-    const seeded = tasks.match(/seeded: (.+)/)![1]!;
-    const { stdout } = await run(["run", "--dry-run"]);
-    expect(stdout).not.toContain(seeded);
-  });
-
   it("uses the shipped proofline.yaml repro lines: feature override, default for the rest", async () => {
     const { stdout } = await run(["run", "--dry-run"]);
     const [feature, security] = stdout.split(/^===== .+ =====\n/m).filter(Boolean);

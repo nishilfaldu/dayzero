@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { ConfigError } from "../src/config.js";
 import { checkTemplate, loadTemplate, renderAll, renderPrompt, reproFor } from "../src/render.js";
 import { TICKET_TYPES } from "../src/types.js";
-import { DEFAULT_REPRO, FEATURE_REPRO, PERF_REPRO, SEEDED, config, ticket } from "./fixtures.js";
+import { DEFAULT_REPRO, FEATURE_REPRO, PERF_REPRO, config, ticket } from "./fixtures.js";
 
 const template = await loadTemplate();
 const repo = "nishilfaldu/epic-stack";
@@ -84,14 +84,6 @@ describe("renderAll", () => {
     expect(rendered!.prompt).toContain("the pr shows decision log; test output; failing test on main; exploit rejected.");
   });
 
-  it.each(TICKET_TYPES)("never includes seeded for %s tickets", (type) => {
-    for (const seeded of [SEEDED, true]) {
-      const [rendered] = renderAll(template, { repo, tickets: [ticket({ type, seeded })] }, config);
-      expect(rendered!.prompt).not.toContain(SEEDED);
-      expect(rendered!.prompt).not.toMatch(/seeded/i);
-    }
-  });
-
   it("fails naming the ticket id and field when a ticket ends up with no evidence", () => {
     const empty = { ...config, evidence: { always: [], by_type: {} } };
     expect(() => renderAll(template, { repo, tickets: [ticket({ id: "lonely" })] }, empty)).toThrow(
@@ -105,9 +97,9 @@ describe("checkTemplate", () => {
     expect(checkTemplate(template)).toEqual([]);
   });
 
-  it("rejects unknown placeholders, including {seeded}", () => {
-    expect(checkTemplate(`${template}\nnote: {seeded}`)).toEqual([
-      expect.stringContaining("unknown placeholder {seeded}"),
+  it("rejects unknown placeholders", () => {
+    expect(checkTemplate(`${template}\nnote: {who}`)).toEqual([
+      expect.stringContaining("unknown placeholder {who}"),
     ]);
   });
 

@@ -38,7 +38,7 @@ describe("proofline run", () => {
     expect(launcher.apiKeys).toEqual(["test-key"]);
   });
 
-  it("records ticket id, agent id, agent url, launch time and the exact prompt in .proofline/run.json", async () => {
+  it("records ticket id, type, agent id, agent url, launch time and the exact prompt in .proofline/run.json", async () => {
     const dir = await project();
     await run(["run"], dir);
     const prompts = await dryRunPrompts(dir);
@@ -46,6 +46,7 @@ describe("proofline run", () => {
     expect(launches).toHaveLength(3);
     expect(launches[0]).toEqual<LaunchRecord>({
       ticketId: "alpha",
+      type: "feature",
       agentId: "bc-fake-1",
       agentUrl: "https://cursor.com/agents/bc-fake-1",
       runId: "run-fake-1",
@@ -55,6 +56,7 @@ describe("proofline run", () => {
       prompt: prompts.alpha!,
     });
     expect(launches.map((l) => l.prompt)).toEqual([prompts.alpha, prompts.beta, prompts.gamma]);
+    expect(launches.map((l) => l.type)).toEqual(["feature", "security", "bug"]);
   });
 
   it("saves each launch before starting the next, so an interrupted run keeps what it launched", async () => {
@@ -69,13 +71,6 @@ describe("proofline run", () => {
     });
     await run(["run"], dir, { launcher });
     expect(seenBySecondLaunch).toEqual(["alpha"]);
-  });
-
-  it("never sends or records seeded", async () => {
-    const dir = await project();
-    const { launcher } = await run(["run"], dir);
-    expect(JSON.stringify(launcher.requests)).not.toContain("planted beta leak");
-    expect(await readFile(join(dir, ".proofline", "run.json"), "utf8")).not.toContain("planted beta leak");
   });
 
   it("prints each agent url and a summary", async () => {
