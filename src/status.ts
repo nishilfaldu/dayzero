@@ -6,10 +6,17 @@ import { type TicketType, isTicketType } from "./types.js";
 
 export interface TicketStatus {
   ticketId: string;
-  /** Ticket type from tasks.yaml, or "?" when the ticket is no longer there. */
+  agentId: string;
+  /** The type recorded at launch, else from tasks.yaml, else "?". */
   type: string;
   agent: string;
   pr: string;
+  /** Set when the agent finished but no PR is confirmed; `--watch` waits on these for a while. */
+  finishedWithoutPr?: {
+    /** e.g. "branch cursor/x is on GitHub", "branch cursor/x never reached GitHub", "no branch". */
+    branch: string;
+    finishedAt?: Date;
+  };
   /** What this run changed on the PR. */
   changes: string[];
   /** Things worth reading that aren't failures, e.g. the agent's error message. */
@@ -47,6 +54,7 @@ export async function checkLaunch(
 ): Promise<TicketStatus> {
   const status: TicketStatus = {
     ticketId: launch.ticketId,
+    agentId: launch.agentId,
     type: type ?? "?",
     agent: "?",
     pr: "-",
@@ -75,7 +83,14 @@ export async function checkLaunch(
   try {
     const pull = await findPull(launch.repo, snapshot, clients.github, status);
     if (!pull) {
-      status.pr = await describeMissingPull(launch.repo, snapshot, clients.github);
+      const missing = await describeMissingPull(launch.repo, snapshot, clients.github);
+      status.pr = missing.pr;
+      if (snapshot.state === "finished") {
+        status.finishedWithoutPr = {
+          branch: missing.branch,
+          ...(snapshot.finishedAt && { finishedAt: snapshot.finishedAt }),
+        };
+      }
       return status;
     }
     status.pr = `${pull.url}${pull.merged ? " (merged)" : pull.state === "closed" ? " (closed)" : ""}`;
@@ -112,15 +127,59 @@ async function findPull(
   return snapshot.branch ? github.findPullForBranch(repo, snapshot.branch) : undefined;
 }
 
-async function describeMissingPull(repo: string, snapshot: AgentSnapshot, github: GitHub): Promise<string> {
+/** `pr` is the table text; `branch` says where the branch stands, for `--watch` to reuse. */
+async function describeMissingPull(
+  repo: string,
+  snapshot: AgentSnapshot,
+  github: GitHub,
+): Promise<{ pr: string; branch: string }> {
   const { state, branch } = snapshot;
   if (branch) {
-    if (await github.branchExists(repo, branch)) return `no PR yet (branch ${branch} is on GitHub)`;
-    return state === "running" ? `no PR yet (branch ${branch} not pushed yet)` : `branch ${branch} never reached GitHub`;
+    if (await github.branchExists(repo, branch)) {
+      return { pr: `no PR yet (branch ${branch} is on GitHub)`, branch: `branch ${branch} is on GitHub` };
+    }
+    if (state === "running") {
+      return { pr: `no PR yet (branch ${branch} not pushed yet)`, branch: `branch ${branch} not pushed yet` };
+    }
+    return { pr: `branch ${branch} never reached GitHub`, branch: `branch ${branch} never reached GitHub` };
   }
-  if (state === "running") return "no PR yet";
-  if (state === "finished") return "no PR (agent finished without a branch)";
-  return `no PR (agent ${state === "error" ? "failed" : state})`;
+  if (state === "running") return { pr: "no PR yet", branch: "no branch yet" };
+  if (state === "finished") return { pr: "no PR (agent finished without a branch)", branch: "no branch" };
+  return { pr: `no PR (agent ${state === "error" ? "failed" : state})`, branch: "no branch" };
+}
+
+/** How long `--watch` keeps waiting for a PR after an agent finishes. */
+export const PR_GRACE_MS = 5 * 60_000;
+
+/**
+ * For `--watch`: a finished agent with no confirmed PR stays pending until PR_GRACE_MS after it finished,
+ * then shows as finished without a PR. Rewrites those rows' PR text and returns the ticket ids still pending.
+ * `firstSeenFinished` remembers, across checks, when this watch first saw an agent finished; it stands in
+ * for the finish time when Cursor doesn't report one.
+ */
+export function applyPrGrace(statuses: TicketStatus[], now: Date, firstSeenFinished: Map<string, number>): string[] {
+  const pending: string[] = [];
+  for (const status of statuses) {
+    const finished = status.finishedWithoutPr;
+    if (!finished) continue;
+    if (!firstSeenFinished.has(status.agentId)) firstSeenFinished.set(status.agentId, now.getTime());
+    const finishedAt = finished.finishedAt?.getTime() ?? firstSeenFinished.get(status.agentId)!;
+    const left = finishedAt + PR_GRACE_MS - now.getTime();
+    if (left > 0) {
+      status.pr = `no PR yet; waiting ${formatDuration(left)} more (${finished.branch})`;
+      pending.push(status.ticketId);
+    } else {
+      status.pr = `finished without a PR (${finished.branch})`;
+    }
+  }
+  return pending;
+}
+
+/** 4m05s, 45s. */
+function formatDuration(ms: number): string {
+  const seconds = Math.ceil(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  return minutes > 0 ? `${minutes}m${String(seconds % 60).padStart(2, "0")}s` : `${seconds}s`;
 }
 
 async function syncPull(

@@ -15,7 +15,7 @@ import { launchTickets, selectTickets } from "./launch.js";
 import { type Launcher, createCursorLauncher } from "./launcher.js";
 import { loadTemplate, renderAll, type RenderedPrompt } from "./render.js";
 import { type RunState, STATE_PATH, readState, writeState } from "./state.js";
-import { type TicketStatus, checkLaunch, latestLaunches, recordedType } from "./status.js";
+import { PR_GRACE_MS, type TicketStatus, applyPrGrace, checkLaunch, latestLaunches, recordedType } from "./status.js";
 import type { ProoflineConfig, Tasks } from "./types.js";
 
 export const WATCH_INTERVAL_MS = 60_000;
@@ -34,7 +34,8 @@ options:
   --dry-run         print each ticket's exact prompt; launch nothing, need no API key
   --only <id>       launch just this ticket, even if it was launched before (repeatable)
   --force           relaunch every ticket, including ones already launched
-  --watch           status: re-check every ${WATCH_INTERVAL_MS / 1000}s until no agent is still running
+  --watch           status: re-check every ${WATCH_INTERVAL_MS / 1000}s until no agent is running and each
+                    finished one has a PR or finished ${PR_GRACE_MS / 60_000}+ min ago
   --tasks <file>    tickets file (default: tasks.yaml)
   --config <file>   model, repro and evidence config (default: proofline.yaml)
   -h, --help        show this help
@@ -209,6 +210,7 @@ async function status(tasksLabel: string, watch: boolean, io: Io): Promise<numbe
     return 1;
   }
   const clients: StatusClients = { agents: io.createAgentReader(apiKey.key), github: io.createGitHub(token) };
+  const firstSeenFinished = new Map<string, number>();
 
   for (let check = 1; ; check++) {
     let statuses: TicketStatus[];
@@ -221,19 +223,25 @@ async function status(tasksLabel: string, watch: boolean, io: Io): Promise<numbe
       return 1;
     }
 
-    if (watch) io.stdout(`${check > 1 ? "\n" : ""}[${io.now().toISOString()}] check ${check}\n`);
+    const now = io.now();
+    const awaitingPr = watch ? applyPrGrace(statuses, now, firstSeenFinished) : [];
+    if (watch) io.stdout(`${check > 1 ? "\n" : ""}[${now.toISOString()}] check ${check}\n`);
     io.stdout(table([["TICKET", "TYPE", "AGENT", "PR"], ...statuses.map((s) => [s.ticketId, s.type, s.agent, s.pr])]));
     const details = statuses.flatMap((s) => [...s.changes, ...s.notes].map((line) => `  ${s.ticketId}: ${line}\n`));
     if (details.length > 0) io.stdout(`\n${details.join("")}`);
     const problems = statuses.flatMap((s) => s.problems.map((p) => `error: ${s.ticketId}: ${p}\n`));
     if (problems.length > 0) io.stderr(`\n${problems.join("")}`);
 
-    const waiting = statuses.filter((s) => NOT_DONE.has(s.agent)).map((s) => s.ticketId);
-    if (!watch || waiting.length === 0) {
-      if (watch) io.stdout("\nno agent is still running; done watching\n");
+    const running = statuses.filter((s) => NOT_DONE.has(s.agent)).map((s) => s.ticketId);
+    if (!watch || running.length + awaitingPr.length === 0) {
+      if (watch) io.stdout("\nnothing left to wait for; done watching\n");
       return problems.length > 0 ? 1 : 0;
     }
-    io.stdout(`\nstill running: ${waiting.join(", ")}; checking again in ${WATCH_INTERVAL_MS / 1000}s\n`);
+    const waitingOn = [
+      ...(running.length > 0 ? [`still running: ${running.join(", ")}`] : []),
+      ...(awaitingPr.length > 0 ? [`waiting for a PR: ${awaitingPr.join(", ")}`] : []),
+    ];
+    io.stdout(`\n${waitingOn.join("; ")}; checking again in ${WATCH_INTERVAL_MS / 1000}s\n`);
     await io.sleep(WATCH_INTERVAL_MS);
   }
 }

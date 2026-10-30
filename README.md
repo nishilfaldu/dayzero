@@ -11,7 +11,7 @@ npm install
 npm run proofline -- run --dry-run        # print every prompt; no API key, no network
 npm run proofline -- run                  # launch an agent for each ticket not yet launched
 npm run proofline -- status               # agent state + PR per ticket; labels and annotates PRs
-npm run proofline -- status --watch       # same, every 60s until no agent is still running
+npm run proofline -- status --watch       # same, every 60s until nothing is pending
 npm run build && node dist/bin.js run     # same, from the build
 npm test                                  # uses a fake Cursor client; no network
 npm run smoke                             # manual: one real launch, see below
@@ -74,7 +74,17 @@ Once a PR is confirmed, `status` brings it up to date. Running it again changes 
 
 **Errors:** a failed Cursor or GitHub lookup for one ticket shows in its row and on stderr, and the rest carry on. The exit code is then 1.
 
-**`--watch`** re-checks every 60 seconds, printing a timestamped table each time. It stops once no agent is still running: every agent has finished, failed, been cancelled, or isn't found. A failed lookup counts as still running, so it gets retried. `run.json` is re-read on every check, so launches made meanwhile are picked up. The exit code is that of the last check.
+**`--watch`** re-checks every 60 seconds, printing a timestamped table each time. It keeps going while any ticket is still pending, and stops once none are. The exit code is that of the last check.
+
+A ticket is pending if:
+- **its agent is running.** A failed lookup counts too, so it gets retried.
+- **its agent finished less than 5 minutes ago and has no confirmed PR.** The PR column counts down, e.g. `no PR yet; waiting 3m20s more (branch cursor/x is on GitHub)`. After 5 minutes it reads `finished without a PR (…)` and the watch stops waiting on it.
+
+The finish time comes from Cursor: the run's start plus its duration. If Cursor doesn't report one, the clock starts when the watch first sees the agent finished.
+
+Failed, cancelled and unknown agents aren't waited on. Plain `status` never waits.
+
+`run.json` is re-read on every check, so launches made meanwhile are picked up.
 
 **Auth:** the GitHub token comes only from `gh auth token`, run with `GH_TOKEN` and `GITHUB_TOKEN` removed from its environment. gh would otherwise print those instead, so the token is always the account `gh auth login` stored. If there's no token, or GitHub rejects it, `status` stops and says to run `gh auth login`. `CURSOR_API_KEY` is found the same way as for `run`.
 

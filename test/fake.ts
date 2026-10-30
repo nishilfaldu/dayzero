@@ -48,6 +48,8 @@ export async function run(argv: string[], cwd: string, options: RunOptions = {})
   const githubTokens: string[] = [];
   const sleeps: number[] = [];
   const cursorKeys: string[] = [];
+  // Starts at NOW; each --watch sleep moves it forward by the time slept.
+  let clock = NOW.getTime();
   const io: Io = {
     cwd,
     env,
@@ -71,9 +73,10 @@ export async function run(argv: string[], cwd: string, options: RunOptions = {})
       return github;
     },
     ghAuthToken: async () => ghToken,
-    now: () => NOW,
+    now: () => new Date(clock),
     sleep: async (ms) => {
       sleeps.push(ms);
+      clock += ms;
       if (sleeps.length > 50) throw new Error("--watch never stopped");
       options.onSleep?.(ms, sleeps.length);
     },

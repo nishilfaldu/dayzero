@@ -7,6 +7,8 @@ import { GitHubAuthError, createGitHubClient, parsePullUrl, resolveGitHubToken, 
 import {
   PROMPT_END,
   PROMPT_START,
+  type TicketStatus,
+  applyPrGrace,
   isTestPath,
   latestLaunches,
   touchesExistingTest,
@@ -76,6 +78,48 @@ describe("latestLaunches", () => {
     const l = (ticketId: string, agentId: string) => ({ ticketId, agentId }) as never;
     const latest = latestLaunches({ launches: [l("a", "1"), l("b", "2"), l("a", "3")] });
     expect(latest.map((x: { agentId: string }) => x.agentId)).toEqual(["3", "2"]);
+  });
+});
+
+describe("applyPrGrace", () => {
+  const now = new Date("2026-10-30T12:00:00.000Z");
+  const row = (agentId: string, finishedAt?: Date): TicketStatus => ({
+    ticketId: agentId,
+    agentId,
+    type: "bug",
+    agent: "finished",
+    pr: "unchanged",
+    changes: [],
+    notes: [],
+    problems: [],
+    finishedWithoutPr: { branch: "no branch", ...(finishedAt && { finishedAt }) },
+  });
+  const ago = (ms: number) => new Date(now.getTime() - ms);
+
+  it("keeps rows pending until 5 minutes after they finished, rounding the countdown up to the second", () => {
+    const rows = [row("a", ago(0)), row("b", ago(4 * 60_000 + 55_500)), row("c", ago(5 * 60_000)), row("d", ago(9e6))];
+    expect(applyPrGrace(rows, now, new Map())).toEqual(["a", "b"]);
+    expect(rows.map((r) => r.pr)).toEqual([
+      "no PR yet; waiting 5m00s more (no branch)",
+      "no PR yet; waiting 5s more (no branch)",
+      "finished without a PR (no branch)",
+      "finished without a PR (no branch)",
+    ]);
+  });
+
+  it("leaves rows without finishedWithoutPr alone", () => {
+    const running = { ...row("a"), agent: "running" };
+    delete running.finishedWithoutPr;
+    expect(applyPrGrace([running], now, new Map())).toEqual([]);
+    expect(running.pr).toBe("unchanged");
+  });
+
+  it("remembers first sight per agent id, so a relaunched ticket starts a fresh wait", () => {
+    const seen = new Map<string, number>([["old-agent", ago(10 * 60_000).getTime()]]);
+    const relaunched = { ...row("new-agent"), ticketId: "t" };
+    expect(applyPrGrace([relaunched], now, seen)).toEqual(["t"]);
+    expect(seen.get("new-agent")).toBe(now.getTime());
+    expect(applyPrGrace([{ ...row("old-agent"), ticketId: "t" }], now, seen)).toEqual([]);
   });
 });
 
@@ -266,6 +310,19 @@ describe("createCursorReader", () => {
     const snapshot = await createCursorReader("key", async () => fake).snapshot("bc-1");
     expect(snapshot).toEqual({ state: "cancelled", branch: "cursor/a", prUrl: "https://github.com/acme/app/pull/1" });
     expect(calls).toEqual([{ agentId: "bc-1", runtime: "cloud", apiKey: "key", limit: 20 }]);
+  });
+
+  it("reports when the newest run ended, from its start and duration", async () => {
+    const createdAt = Date.parse("2026-10-30T12:00:00.000Z");
+    const { fake } = sdk([{ status: "finished", createdAt, durationMs: 90_000 }]);
+    const snapshot = await createCursorReader("k", async () => fake).snapshot("bc-1");
+    expect(snapshot?.finishedAt).toEqual(new Date("2026-10-30T12:01:30.000Z"));
+  });
+
+  it("has no finish time while running, or when Cursor leaves out the duration", async () => {
+    const reader = (runs: unknown[]) => createCursorReader("k", async () => sdk(runs).fake);
+    expect(await reader([{ status: "running", createdAt: 1, durationMs: 5 }]).snapshot("bc-1")).not.toHaveProperty("finishedAt");
+    expect(await reader([{ status: "finished", createdAt: 1 }]).snapshot("bc-1")).not.toHaveProperty("finishedAt");
   });
 
   it("includes the newest run's error", async () => {

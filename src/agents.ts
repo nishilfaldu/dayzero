@@ -8,6 +8,8 @@ export interface AgentSnapshot {
   /** Branch and PR as Cursor reports them; either may be missing, and neither is checked against GitHub. */
   branch?: string;
   prUrl?: string;
+  /** When the newest run ended, if it has and Cursor reports its start and duration. */
+  finishedAt?: Date;
 }
 
 export interface AgentReader {
@@ -19,6 +21,9 @@ interface SdkRun {
   readonly status: AgentState;
   readonly error?: { message: string; code?: string };
   readonly git?: { branches: { repoUrl: string; branch?: string; prUrl?: string }[] };
+  /** Epoch milliseconds. */
+  readonly createdAt?: number;
+  readonly durationMs?: number;
 }
 
 /** The slice of @cursor/sdk this file uses, so tests can pass a fake. */
@@ -52,11 +57,13 @@ export function createCursorReader(apiKey: string, loadSdk: () => Promise<Cursor
       const branch = branches.find((b) => b.branch)?.branch;
       const prUrl = branches.find((b) => b.prUrl)?.prUrl;
       const error = newest.status === "error" && newest.error ? describeRunError(newest.error) : undefined;
+      const ended = newest.status !== "running" && newest.createdAt !== undefined && newest.durationMs !== undefined;
       return {
         state: newest.status,
         ...(error && { error }),
         ...(branch && { branch }),
         ...(prUrl && { prUrl }),
+        ...(ended && { finishedAt: new Date(newest.createdAt! + newest.durationMs!) }),
       };
     },
   };

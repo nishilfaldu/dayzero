@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { LaunchRecord } from "../src/state.js";
 import type { TicketType } from "../src/types.js";
 import { PROMPT_END, PROMPT_START, TEST_FILES_MARKER, promptSection } from "../src/status.js";
-import { TASKS, run, tempDir } from "./fake.js";
+import { NOW, TASKS, run, tempDir } from "./fake.js";
 import { FakeAgents, FakeGitHub } from "./fake-status.js";
 
 /** A record as `proofline run` writes it now; pass `type: null` for one from before types were recorded. */
@@ -342,16 +342,19 @@ describe("ticket type", () => {
   });
 });
 
+/** A finish time far enough back that --watch no longer waits for a PR. */
+const LONG_AGO = new Date("2026-10-30T11:00:00.000Z");
+
 describe("--watch", () => {
   it("re-checks every 60s, printing the table each time, until no agent is running", async () => {
     const dir = await project(ALL);
     const agents = new FakeAgents({
       "bc-a": { state: "running" },
       "bc-b": { state: "running" },
-      "bc-g": { state: "finished" },
+      "bc-g": { state: "finished", finishedAt: LONG_AGO },
     });
     const onSleep = (_ms: number, count: number) => {
-      if (count === 1) agents.agents["bc-a"] = { state: "finished" };
+      if (count === 1) agents.agents["bc-a"] = { state: "finished", finishedAt: LONG_AGO };
       if (count === 2) agents.agents["bc-b"] = { state: "error" };
     };
     const { code, stdout, sleeps } = await run(["status", "--watch"], dir, { agents, onSleep });
@@ -359,15 +362,15 @@ describe("--watch", () => {
     expect(sleeps).toEqual([60_000, 60_000]);
     expect(stdout.match(/^TICKET {2}TYPE/gm)).toHaveLength(3);
     expect(stdout).toContain("[2026-10-30T12:00:00.000Z] check 1\n");
-    expect(stdout).toContain("[2026-10-30T12:00:00.000Z] check 3\n");
+    expect(stdout).toContain("[2026-10-30T12:02:00.000Z] check 3\n");
     expect(stdout).toContain("still running: alpha, beta; checking again in 60s\n");
     expect(stdout).toContain("still running: beta; checking again in 60s\n");
-    expect(stdout.endsWith("no agent is still running; done watching\n")).toBe(true);
+    expect(stdout.endsWith("nothing left to wait for; done watching\n")).toBe(true);
   });
 
   it("stops after one check when nothing is running", async () => {
     const dir = await project(ALL);
-    const agents = new FakeAgents({ "bc-a": { state: "finished" }, "bc-b": { state: "cancelled" } });
+    const agents = new FakeAgents({ "bc-a": { state: "finished", finishedAt: LONG_AGO }, "bc-b": { state: "cancelled" } });
     const { code, stdout, sleeps } = await run(["status", "--watch"], dir, { agents });
     expect(code).toBe(0);
     expect(sleeps).toEqual([]);
@@ -379,7 +382,7 @@ describe("--watch", () => {
     const dir = await project([launch("alpha", "bc-a")]);
     const agents = new FakeAgents({ "bc-a": new Error("socket hang up") });
     const onSleep = () => {
-      agents.agents["bc-a"] = { state: "finished" };
+      agents.agents["bc-a"] = { state: "finished", finishedAt: LONG_AGO };
     };
     const { code, sleeps, stderr } = await run(["status", "--watch"], dir, { agents, onSleep });
     expect(sleeps).toHaveLength(1);
@@ -393,9 +396,9 @@ describe("--watch", () => {
     const onSleep = (_ms: number, count: number) => {
       if (count === 1) {
         writeFileSync(join(dir, ".proofline", "run.json"), JSON.stringify({ launches: [launch("alpha", "bc-a"), launch("beta", "bc-b")] }));
-        agents.agents["bc-a"] = { state: "finished" };
+        agents.agents["bc-a"] = { state: "finished", finishedAt: LONG_AGO };
       }
-      if (count === 2) agents.agents["bc-b"] = { state: "finished" };
+      if (count === 2) agents.agents["bc-b"] = { state: "finished", finishedAt: LONG_AGO };
     };
     const { stdout, sleeps } = await run(["status", "--watch"], dir, { agents, onSleep });
     expect(sleeps).toHaveLength(2);
@@ -534,5 +537,106 @@ describe("auth", () => {
     const { code, stderr } = await run(["status", "--force"], dir);
     expect(code).toBe(2);
     expect(stderr).toContain("--force only applies to `proofline run`");
+  });
+});
+
+describe("--watch: waiting for a PR after an agent finishes", () => {
+  const minutesAfterNow = (m: number) => new Date(NOW.getTime() + m * 60_000);
+
+  it("keeps waiting on a finished agent with no PR, and stops once the PR appears", async () => {
+    const dir = await project([launch("alpha", "bc-a")]);
+    const github = new FakeGitHub();
+    github.branches.add("acme/app:a");
+    const agents = new FakeAgents({ "bc-a": { state: "finished", branch: "a", finishedAt: NOW } });
+    const onSleep = (_ms: number, count: number) => {
+      if (count === 2) github.addPull({ number: 1, headRef: "a" });
+    };
+    const { code, stdout, sleeps } = await run(["status", "--watch"], dir, { agents, github, onSleep });
+    expect(code).toBe(0);
+    expect(sleeps).toHaveLength(2);
+    expect(stdout).toContain("alpha   feature  finished  no PR yet; waiting 5m00s more (branch a is on GitHub)");
+    expect(stdout).toContain("alpha   feature  finished  no PR yet; waiting 4m00s more (branch a is on GitHub)");
+    expect(stdout).toContain("waiting for a PR: alpha; checking again in 60s\n");
+    expect(stdout).toContain("alpha   feature  finished  https://github.com/acme/app/pull/1");
+    expect(stdout).toContain("labelled feature");
+    expect(stdout.endsWith("nothing left to wait for; done watching\n")).toBe(true);
+  });
+
+  it("gives up 5 minutes after the agent finished and shows it as finished without a PR", async () => {
+    const dir = await project([launch("alpha", "bc-a")]);
+    const agents = new FakeAgents({ "bc-a": { state: "finished", branch: "a", finishedAt: NOW } });
+    const { code, stdout, sleeps } = await run(["status", "--watch"], dir, { agents });
+    expect(code).toBe(0);
+    expect(sleeps).toEqual([60_000, 60_000, 60_000, 60_000, 60_000]);
+    expect(stdout).toContain("[2026-10-30T12:04:00.000Z] check 5\n");
+    expect(stdout).toContain("no PR yet; waiting 1m00s more (branch a never reached GitHub)");
+    expect(stdout).toContain("[2026-10-30T12:05:00.000Z] check 6\n");
+    const last = stdout.slice(stdout.lastIndexOf("check 6"));
+    expect(last).toContain("alpha   feature  finished  finished without a PR (branch a never reached GitHub)");
+    expect(last).toContain("nothing left to wait for; done watching");
+  });
+
+  it("counts from when the agent finished, not from when watching started", async () => {
+    const dir = await project([launch("alpha", "bc-a")]);
+    const agents = new FakeAgents({ "bc-a": { state: "finished", finishedAt: minutesAfterNow(-4.5) } });
+    const { stdout, sleeps } = await run(["status", "--watch"], dir, { agents });
+    expect(stdout).toContain("no PR yet; waiting 30s more (no branch)");
+    expect(sleeps).toHaveLength(1);
+    expect(stdout).toContain("finished without a PR (no branch)");
+  });
+
+  it("doesn't wait at all for an agent that finished over 5 minutes ago", async () => {
+    const dir = await project([launch("alpha", "bc-a")]);
+    const agents = new FakeAgents({ "bc-a": { state: "finished", finishedAt: minutesAfterNow(-5) } });
+    const { stdout, sleeps } = await run(["status", "--watch"], dir, { agents });
+    expect(sleeps).toEqual([]);
+    expect(stdout).toContain("alpha   feature  finished  finished without a PR (no branch)");
+  });
+
+  it("counts from when it first saw the agent finished, if Cursor gives no finish time", async () => {
+    const dir = await project([launch("alpha", "bc-a")]);
+    const agents = new FakeAgents({ "bc-a": { state: "running" } });
+    const onSleep = (_ms: number, count: number) => {
+      if (count === 1) agents.agents["bc-a"] = { state: "finished" };
+    };
+    const { stdout, sleeps } = await run(["status", "--watch"], dir, { agents, onSleep });
+    // Seen finished at check 2 (12:01), so it waits until 12:06: checks 2..6 pending, check 7 gives up.
+    expect(sleeps).toHaveLength(6);
+    expect(stdout).toContain("[2026-10-30T12:01:00.000Z] check 2\n");
+    expect(stdout.slice(stdout.indexOf("check 2"))).toContain("waiting 5m00s more");
+    expect(stdout.slice(stdout.indexOf("check 7"))).toContain("finished without a PR");
+  });
+
+  it("doesn't wait for a PR from failed or cancelled agents", async () => {
+    const dir = await project([launch("alpha", "bc-a"), launch("beta", "bc-b")]);
+    const agents = new FakeAgents({
+      "bc-a": { state: "error", finishedAt: NOW },
+      "bc-b": { state: "cancelled", finishedAt: NOW },
+    });
+    const { sleeps, stdout } = await run(["status", "--watch"], dir, { agents });
+    expect(sleeps).toEqual([]);
+    expect(stdout).not.toContain("waiting");
+  });
+
+  it("names running agents and agents awaiting a PR separately", async () => {
+    const dir = await project([launch("alpha", "bc-a"), launch("beta", "bc-b")]);
+    const agents = new FakeAgents({
+      "bc-a": { state: "finished", finishedAt: NOW },
+      "bc-b": { state: "running" },
+    });
+    const onSleep = () => {
+      agents.agents["bc-a"] = { state: "finished", finishedAt: LONG_AGO };
+      agents.agents["bc-b"] = { state: "finished", finishedAt: LONG_AGO };
+    };
+    const { stdout } = await run(["status", "--watch"], dir, { agents, onSleep });
+    expect(stdout).toContain("still running: beta; waiting for a PR: alpha; checking again in 60s\n");
+  });
+
+  it("leaves plain status unchanged: no waiting, no 'finished without a PR'", async () => {
+    const dir = await project([launch("alpha", "bc-a")]);
+    const agents = new FakeAgents({ "bc-a": { state: "finished", finishedAt: NOW } });
+    const { stdout, sleeps } = await run(["status"], dir, { agents });
+    expect(sleeps).toEqual([]);
+    expect(stdout).toContain("alpha   feature  finished  no PR (agent finished without a branch)");
   });
 });
