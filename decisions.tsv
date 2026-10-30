@@ -8,3 +8,16 @@ ts	phase	decision	why	evidence	result
 2026-10-30T19:28:37Z	delegate	Accepted the one-file marker write	The byte compare matched and git status showed no other path from that write	commit e9756bd	accepted
 2026-10-30T19:30:14Z	review	Accepted a comment pass that deleted nothing	The marker line is the feature, and the log rows are the trail, so neither is a comment	SMOKE.md decisions.tsv	0 deletions
 2026-10-30T19:31:11Z	pr	Opened the pull request with the marker and the trail	The ticket asked for both in the review diff, and the byte compare already matched	https://github.com/nishilfaldu/proofline/pull/1	PR 1 open
+2026-10-30T19:32:58Z	audit	Supersede weak rows from the files and the pull request	The workspace has no agent-transcripts directory, so this pass uses commits and the file bytes	/home/ubuntu/.cursor/projects/workspace/agent-transcripts	missing
+2026-10-30T19:32:59Z	verify	Supersede the verify row. Required bytes are proofline smoke test plus one newline. A fresh read of SMOKE.md matches	The earlier row said required line without quoting it	SMOKE.md	21 bytes match
+2026-10-30T19:32:59Z	how	Supersede the how row. Main tracks only README.md	README.md does not show the rest of the tree	commit 3350a0f	no collision
+2026-10-30T19:32:59Z	tests	Supersede the tests row. Main has no test file	README.md does not prove the absence of tests	commit 3350a0f	unchanged
+2026-10-30T19:32:59Z	design	Supersede the design row. The required line is proofline smoke test at SMOKE.md, so no second design was written	README.md does not name that line	SMOKE.md	skipped
+2026-10-30T19:32:59Z	shape	Supersede the shape row. The chosen bytes are the 21 bytes in SMOKE.md	README.md only supports the trailing newline habit	SMOKE.md	chosen
+2026-10-30T19:32:59Z	time	The 19:27:08 rows were written in one batch after the layout check	They share one timestamp, so they are not five separate moments	decisions.tsv	batched
+2026-10-30T19:32:59Z	verify	The byte compare ran before commit e9756bd. The verify row was stamped in the same second as the log commit	The row time is the append time	commit e9756bd	ordered
+2026-10-30T19:32:59Z	delegate	Supersede the git status claim. The pull request changes only SMOKE.md and decisions.tsv	The earlier row named no command output	https://github.com/nishilfaldu/proofline/pull/1	two files
+2026-10-30T19:32:59Z	frame	Close the frame row. The marker and the trail are on the open pull request	The first row still says open	https://github.com/nishilfaldu/proofline/pull/1	closed
+2026-10-30T19:32:59Z	push	The branch tracks origin/cursor/smoke-marker-8b41 and the pull request is open	An earlier review saw the branch before the push	https://github.com/nishilfaldu/proofline/pull/1	pushed
+2026-10-30T19:32:59Z	author	Left the Co-authored-by trailer on the agent commits	I did not type that trailer, and rewriting pushed commits would need a force push	commit e9756bd	left as committed
+2026-10-30T19:32:59Z	log	Record the log commits 1c8d7e5, 75b6de9, and f84ccce	The earlier log stopped at the marker commit	commit f84ccce	committed
