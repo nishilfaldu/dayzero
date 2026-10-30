@@ -16,7 +16,6 @@ npm run proofline -- status               # agent state + PR per ticket; labels 
 npm run proofline -- status --watch       # same, every 60s until nothing is pending
 npm run build && node dist/bin.js run     # same, from the build
 npm test                                  # uses a fake Cursor client; no network
-npm run smoke                             # manual: one real launch, see below
 ```
 
 ## Init
@@ -118,12 +117,3 @@ Failed, cancelled and unknown agents aren't waited on. Plain `status` never wait
 - `prompts/ticket.md`: the ticket prompt template, with `{type} {title} {description} {repro} {done} {evidence} {repo}` placeholders. `{repro}` is required.
 
 A ticket's `{repro}` is its type's override if there is one, otherwise `repro.default`. The shipped config overrides only `feature`, with "write the failing e2e test first." A ticket's evidence is `always` + `by_type[type]` + its own `evidence`, with duplicates removed.
-
-## Smoke test
-
-`npm run smoke` makes one real launch:
-1. Copies `smoke/` into a temp directory, so this checkout's `.proofline/run.json` is untouched.
-2. Runs the normal `proofline run` there, which launches one trivial ticket: add `SMOKE.md` to `nishilfaldu/proofline`, on the default model.
-3. Polls that agent's run for up to 10 minutes and prints its status, branch, PR and any error.
-
-It exits 0 if the run finishes or is still running at the timeout, and 1 if the launch or the run fails. It spends real Cursor usage and opens a real PR.

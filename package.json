@@ -18,8 +18,7 @@
     "build": "tsc -p tsconfig.build.json",
     "proofline": "tsx src/bin.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "smoke": "tsx scripts/smoke.ts"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@cursor/sdk": "^1.2.0",
