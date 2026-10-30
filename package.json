@@ -1,0 +1,32 @@
+{
+  "name": "proofline",
+  "version": "0.1.0",
+  "description": "Start one Cursor cloud agent per ticket; each agent opens a PR that carries its own evidence.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "proofline": "dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "prompts"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "proofline": "tsx src/bin.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

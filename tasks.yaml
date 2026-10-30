@@ -1,0 +1,24 @@
+repo: nishilfaldu/epic-stack
+
+tickets:
+  - id: notes-count
+    type: feature
+    title: Show a note count on the notes page
+    description: >-
+      The notes sidebar at /users/:username/notes lists a user's notes but not
+      how many there are. Show "N notes" above the list, and "1 note" when
+      there is exactly one.
+    done: the notes page shows the right count for 0, 1 and several notes
+    evidence:
+      - screenshot of the notes page with 0, 1 and 3 notes
+
+  - id: note-edit-idor
+    type: security
+    title: Users can edit other users' notes
+    description: >-
+      A logged-in user can submit the note editor form with another user's
+      note id and overwrite that note.
+    done: editing a note you don't own returns 403 and leaves the note unchanged
+    seeded: ownership check removed from the note editor action
+    evidence:
+      - failing test on main, passing on the branch
