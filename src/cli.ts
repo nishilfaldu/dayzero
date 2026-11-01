@@ -26,19 +26,19 @@ import {
   latestLaunches,
   recordedType,
 } from "./status.js";
-import type { ProoflineConfig, Tasks } from "./types.js";
+import type { DayzeroConfig, Tasks } from "./types.js";
 
 export const WATCH_INTERVAL_MS = 60_000;
 
-export const USAGE = `usage: proofline init [--dry-run] [--force] [--tasks <file>] [--config <file>]
-       proofline run [--dry-run] [--only <id>]... [--force] [--skip-init-check] [--tasks <file>] [--config <file>]
-       proofline status [--watch] [--tasks <file>]
+export const USAGE = `usage: dayzero init [--dry-run] [--force] [--tasks <file>] [--config <file>]
+       dayzero run [--dry-run] [--only <id>]... [--force] [--skip-init-check] [--tasks <file>] [--config <file>]
+       dayzero status [--watch] [--tasks <file>]
 
 init     Starts one cloud agent on the tasks.yaml repo, from main, with prompts/init.md:
          it sets the repo up (pstack, verification skills, AGENTS.md, cloud
          environment) in one PR. Recorded in ${STATE_PATH} as "${INIT_ID}"; refuses to
          launch a second one unless --force.
-run      Reads tasks.yaml and proofline.yaml, validates them, and starts one Cursor
+run      Reads tasks.yaml and dayzero.yaml, validates them, and starts one Cursor
          cloud agent per ticket on the tasks.yaml repo, from main. Launches are
          recorded in ${STATE_PATH}; tickets already recorded there are skipped.
          Refuses to launch until a recorded init's PR is merged into main, since
@@ -57,7 +57,7 @@ options:
                     finished one has a PR or finished ${PR_GRACE_MS / 60_000}+ min ago, and each one
                     in error failed ${ERROR_GRACE_MS / 60_000}+ min ago (Cursor can resume a failed run)
   --tasks <file>    tickets file (default: tasks.yaml)
-  --config <file>   model, repro and evidence config (default: proofline.yaml)
+  --config <file>   model, repro and evidence config (default: dayzero.yaml)
   -h, --help        show this help
 
 ${API_KEY_VAR} is read from the environment, or else from .env.local.
@@ -108,7 +108,7 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
   if (command === "status") {
     const runOnly = (["dry-run", "only", "force", "skip-init-check", "config"] as const).filter((flag) => values[flag] !== undefined);
     if (runOnly.length > 0) {
-      io.stderr(`error: ${runOnly.map((f) => `--${f}`).join(", ")} only applies to \`proofline run\`\n\n${USAGE}\n`);
+      io.stderr(`error: ${runOnly.map((f) => `--${f}`).join(", ")} only applies to \`dayzero run\`\n\n${USAGE}\n`);
       return 2;
     }
     return status(values.tasks ?? "tasks.yaml", values.watch ?? false, io);
@@ -124,9 +124,9 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
     return 2;
   }
   const misplaced = [
-    ...(values.watch ? ["--watch only applies to `proofline status`"] : []),
-    ...(command === "init" && values.only ? ["--only only applies to `proofline run`"] : []),
-    ...(command === "init" && values["skip-init-check"] ? ["--skip-init-check only applies to `proofline run`"] : []),
+    ...(values.watch ? ["--watch only applies to `dayzero status`"] : []),
+    ...(command === "init" && values.only ? ["--only only applies to `dayzero run`"] : []),
+    ...(command === "init" && values["skip-init-check"] ? ["--skip-init-check only applies to `dayzero run`"] : []),
   ];
   if (misplaced.length > 0) {
     io.stderr(`${misplaced.map((m) => `error: ${m}\n`).join("")}\n${USAGE}\n`);
@@ -134,12 +134,12 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
   }
 
   const tasksLabel = values.tasks ?? "tasks.yaml";
-  const configLabel = values.config ?? "proofline.yaml";
+  const configLabel = values.config ?? "dayzero.yaml";
   if (command === "init") {
     return init({ dryRun: values["dry-run"] ?? false, force: values.force ?? false }, tasksLabel, configLabel, io);
   }
 
-  let inputs: { tasks: Tasks; config: ProoflineConfig };
+  let inputs: { tasks: Tasks; config: DayzeroConfig };
   let prompts: RenderedPrompt[];
   try {
     const loaded = await loadInputs(io.cwd, tasksLabel, configLabel);
@@ -168,7 +168,7 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
 
 async function launch(
   prompts: RenderedPrompt[],
-  { tasks, config }: { tasks: Tasks; config: ProoflineConfig },
+  { tasks, config }: { tasks: Tasks; config: DayzeroConfig },
   flags: { only: string[]; force: boolean; skipInitCheck: boolean },
   io: Io,
 ): Promise<number> {
@@ -247,7 +247,7 @@ async function initReady(state: RunState, repo: string, apiKey: string, io: Io):
   if (!check.ready) {
     io.stderr(
       `error: ${check.reason}. Agents start from main, so they'd miss pstack, the verification skills, AGENTS.md and the environment setup until init's PR is merged there.\n` +
-        "nothing was launched; run `proofline init` if you haven't, merge its PR, then run again (or pass --skip-init-check to launch anyway)\n",
+        "nothing was launched; run `dayzero init` if you haven't, merge its PR, then run again (or pass --skip-init-check to launch anyway)\n",
     );
     return 1;
   }
@@ -263,7 +263,7 @@ async function init(
   io: Io,
 ): Promise<number> {
   let repo: string;
-  let config: ProoflineConfig;
+  let config: DayzeroConfig;
   let prompt: string;
   try {
     const loaded = await loadInputs(io.cwd, tasksLabel, configLabel, () => loadInitTemplate());
@@ -289,7 +289,7 @@ async function init(
   const previous = initLaunches(state).at(-1);
   if (previous && !flags.force) {
     io.stderr(
-      `error: init was already launched at ${previous.launchedAt}: ${previous.agentUrl}\nnothing was launched; run \`proofline init --force\` to launch another\n`,
+      `error: init was already launched at ${previous.launchedAt}: ${previous.agentUrl}\nnothing was launched; run \`dayzero init --force\` to launch another\n`,
     );
     return 1;
   }
@@ -313,7 +313,7 @@ async function init(
     onFailed: (id, reason) => io.stdout(`  failed   ${id}: ${reason}\n`),
   });
   if (outcome.failed.length > 0) return 1;
-  io.stdout(`\nrecorded in ${STATE_PATH}; follow it with \`proofline status --watch\`\n`);
+  io.stdout(`\nrecorded in ${STATE_PATH}; follow it with \`dayzero status --watch\`\n`);
   return 0;
 }
 
@@ -325,7 +325,7 @@ const NOT_DONE = new Set(["running", "lookup failed"]);
 async function status(tasksLabel: string, watch: boolean, io: Io): Promise<number> {
   try {
     if ((await readState(io.cwd)).launches.length === 0) {
-      io.stdout(`nothing launched yet (${STATE_PATH} has no launches); run \`proofline run\` first\n`);
+      io.stdout(`nothing launched yet (${STATE_PATH} has no launches); run \`dayzero run\` first\n`);
       return 0;
     }
   } catch (err) {
@@ -438,7 +438,7 @@ async function loadInputs(
   tasksLabel: string,
   configLabel: string,
   loadPromptTemplate: () => Promise<string> = loadTemplate,
-): Promise<{ tasks: Tasks; config: ProoflineConfig; template: string }> {
+): Promise<{ tasks: Tasks; config: DayzeroConfig; template: string }> {
   const [tasks, config, template] = await Promise.allSettled([
     loadTasks(resolve(cwd, tasksLabel), tasksLabel),
     loadConfig(resolve(cwd, configLabel), configLabel),

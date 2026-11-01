@@ -5,7 +5,7 @@ import {
   TICKET_TYPES,
   isTicketType,
   type ModelChoice,
-  type ProoflineConfig,
+  type DayzeroConfig,
   type Tasks,
   type Ticket,
 } from "./types.js";
@@ -29,7 +29,7 @@ export async function loadTasks(path: string, label = "tasks.yaml"): Promise<Tas
   return validateTasks(await readYaml(path, label), label);
 }
 
-export async function loadConfig(path: string, label = "proofline.yaml"): Promise<ProoflineConfig> {
+export async function loadConfig(path: string, label = "dayzero.yaml"): Promise<DayzeroConfig> {
   return validateConfig(await readYaml(path, label), label);
 }
 
@@ -102,7 +102,7 @@ function validateTicket(item: unknown, index: number, label: string, problems: s
   unknownKeys(item, TICKET_KEYS, at, problems);
 
   if (text(item, "id", at, problems) === INIT_ID) {
-    problems.push(`${at("id")} "${INIT_ID}" is reserved for \`proofline init\`; pick another id`);
+    problems.push(`${at("id")} "${INIT_ID}" is reserved for \`dayzero init\`; pick another id`);
   }
   const type = item.type;
   if (type === undefined || type === null) {
@@ -140,7 +140,7 @@ function duplicateIds(raw: unknown[], label: string, problems: string[]): void {
   }
 }
 
-export function validateConfig(data: unknown, label = "proofline.yaml"): ProoflineConfig {
+export function validateConfig(data: unknown, label = "dayzero.yaml"): DayzeroConfig {
   const problems: string[] = [];
   const at = (field: string) => `${label}: field "${field}"`;
 
@@ -149,7 +149,7 @@ export function validateConfig(data: unknown, label = "proofline.yaml"): Proofli
   }
   unknownKeys(data, CONFIG_KEYS, at, problems);
 
-  const config: ProoflineConfig = {
+  const config: DayzeroConfig = {
     evidence: { always: [], by_type: {} },
     repro: { default: "", overrides: {} },
   };

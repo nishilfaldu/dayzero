@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { ConfigError } from "./config.js";
 import { mergeEvidence } from "./evidence.js";
-import type { ProoflineConfig, Tasks, Ticket } from "./types.js";
+import type { DayzeroConfig, Tasks, Ticket } from "./types.js";
 
 export const DEFAULT_TEMPLATE_PATH = fileURLToPath(new URL("../prompts/ticket.md", import.meta.url));
 
@@ -30,13 +30,13 @@ export function checkTemplate(template: string, label = "prompts/ticket.md"): st
     }
   }
   if (!template.includes("{repro}")) {
-    problems.push(`${label}: missing the {repro} placeholder, so proofline.yaml's repro lines would never be used`);
+    problems.push(`${label}: missing the {repro} placeholder, so dayzero.yaml's repro lines would never be used`);
   }
   return problems;
 }
 
-/** The ticket type's override from proofline.yaml if it has one, else the default. */
-export function reproFor(ticket: Ticket, config: ProoflineConfig): string {
+/** The ticket type's override from dayzero.yaml if it has one, else the default. */
+export function reproFor(ticket: Ticket, config: DayzeroConfig): string {
   return config.repro.overrides[ticket.type] ?? config.repro.default;
 }
 
@@ -62,14 +62,14 @@ export function renderPrompt(template: string, ticket: Ticket, { repo, repro, ev
     .replace(PLACEHOLDER_PATTERN, (match, name: string) => (name in values ? values[name as Placeholder] : match));
 }
 
-export function renderAll(template: string, tasks: Tasks, config: ProoflineConfig, label = "tasks.yaml"): RenderedPrompt[] {
+export function renderAll(template: string, tasks: Tasks, config: DayzeroConfig, label = "tasks.yaml"): RenderedPrompt[] {
   const problems: string[] = [];
   const rendered: RenderedPrompt[] = [];
   for (const ticket of tasks.tickets) {
     const evidence = mergeEvidence(ticket, config);
     if (evidence.length === 0) {
       problems.push(
-        `${label}: ticket "${ticket.id}": field "evidence" ends up empty; add it to the ticket or to evidence.always / evidence.by_type.${ticket.type} in proofline.yaml`,
+        `${label}: ticket "${ticket.id}": field "evidence" ends up empty; add it to the ticket or to evidence.always / evidence.by_type.${ticket.type} in dayzero.yaml`,
       );
       continue;
     }

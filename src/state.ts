@@ -3,13 +3,13 @@ import { dirname, join } from "node:path";
 import { ConfigError } from "./config.js";
 import type { TicketType } from "./types.js";
 
-export const STATE_PATH = join(".proofline", "run.json");
+export const STATE_PATH = join(".dayzero", "run.json");
 
 /** One successful launch. Relaunches append a new record; nothing is ever overwritten. */
 export interface LaunchRecord {
-  /** The ticket's id, or "init" for `proofline init`. */
+  /** The ticket's id, or "init" for `dayzero init`. */
   ticketId: string;
-  /** Set only on the `proofline init` launch. */
+  /** Set only on the `dayzero init` launch. */
   kind?: "init";
   /** The ticket's type at launch. Missing for init, and from records written before types were recorded. */
   type?: TicketType;

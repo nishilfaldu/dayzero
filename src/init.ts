@@ -43,7 +43,7 @@ export async function checkInitMerged(
   clients: { agents: AgentReader; github: GitHub },
 ): Promise<InitCheck> {
   const inits = initLaunches(state).filter((launch) => launch.repo.toLowerCase() === repo.toLowerCase());
-  if (inits.length === 0) return { ready: false, reason: `no \`proofline init\` is recorded for ${repo}` };
+  if (inits.length === 0) return { ready: false, reason: `no \`dayzero init\` is recorded for ${repo}` };
 
   const reasons: string[] = [];
   for (const launch of inits.reverse()) {

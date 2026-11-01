@@ -20,11 +20,11 @@ if pstack's skills aren't available in this session after installing it, say so 
 don't ask me before committing or opening the pr. if you're truly stuck, stop and write up why.`;
 
 async function project(files: Record<string, string> = {}) {
-  return tempDir({ "tasks.yaml": TASKS, "proofline.yaml": CONFIG, ...files });
+  return tempDir({ "tasks.yaml": TASKS, "dayzero.yaml": CONFIG, ...files });
 }
 
 async function state(dir: string): Promise<RunState> {
-  return JSON.parse(await readFile(join(dir, ".proofline", "run.json"), "utf8"));
+  return JSON.parse(await readFile(join(dir, ".dayzero", "run.json"), "utf8"));
 }
 
 describe("init --dry-run", () => {
@@ -35,7 +35,7 @@ describe("init --dry-run", () => {
     expect(stdout).toBe(`===== init =====\n${EXPECTED_PROMPT}\n`);
     expect(stderr).toBe("\ndry run: init prompt for acme/app; nothing was launched\n");
     expect(launcherCreated).toBe(false);
-    await expect(readFile(join(dir, ".proofline", "run.json"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(dir, ".dayzero", "run.json"), "utf8")).rejects.toThrow();
   });
 
   it("still prints the prompt when an init is already recorded", async () => {
@@ -47,16 +47,16 @@ describe("init --dry-run", () => {
   });
 
   it("reports invalid config like run does", async () => {
-    const dir = await project({ "proofline.yaml": "evidence: {always: [log]}\n" });
+    const dir = await project({ "dayzero.yaml": "evidence: {always: [log]}\n" });
     const { code, stderr } = await run(["init", "--dry-run"], dir);
     expect(code).toBe(1);
-    expect(stderr).toContain('proofline.yaml: field "repro" is required');
+    expect(stderr).toContain('dayzero.yaml: field "repro" is required');
   });
 });
 
 describe("init", () => {
   it("launches one agent on the tasks.yaml repo from main with the init prompt and the configured model", async () => {
-    const dir = await project({ "proofline.yaml": `model: composer-2.5\n${CONFIG}` });
+    const dir = await project({ "dayzero.yaml": `model: composer-2.5\n${CONFIG}` });
     const { code, stdout, launcher } = await run(["init"], dir);
     expect(code).toBe(0);
     expect(launcher.requests).toEqual([
@@ -64,7 +64,7 @@ describe("init", () => {
     ]);
     expect(stdout).toContain("launching the init agent on acme/app from main with composer-2.5");
     expect(stdout).toContain("launched init: https://cursor.com/agents/bc-fake-1");
-    expect(stdout).toContain("follow it with `proofline status --watch`");
+    expect(stdout).toContain("follow it with `dayzero status --watch`");
   });
 
   it("records the launch as init, with no type", async () => {
@@ -92,7 +92,7 @@ describe("init", () => {
     expect(again.code).toBe(1);
     expect(again.launcherCreated).toBe(false);
     expect(again.stderr).toBe(
-      `error: init was already launched at ${NOW.toISOString()}: https://cursor.com/agents/bc-fake-1\nnothing was launched; run \`proofline init --force\` to launch another\n`,
+      `error: init was already launched at ${NOW.toISOString()}: https://cursor.com/agents/bc-fake-1\nnothing was launched; run \`dayzero init --force\` to launch another\n`,
     );
     expect((await state(dir)).launches).toHaveLength(1);
   });
@@ -122,7 +122,7 @@ describe("init", () => {
     const first = await run(["init"], dir, { launcher: failing });
     expect(first.code).toBe(1);
     expect(first.stdout).toContain("failed   init: RateLimitError: Your prepaid balance is used up.");
-    await expect(readFile(join(dir, ".proofline", "run.json"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(dir, ".dayzero", "run.json"), "utf8")).rejects.toThrow();
     expect((await run(["init"], dir)).code).toBe(0);
   });
 
@@ -136,8 +136,8 @@ describe("init", () => {
 
   it("rejects --only and --watch", async () => {
     const dir = await project();
-    expect((await run(["init", "--only", "alpha"], dir)).stderr).toContain("--only only applies to `proofline run`");
-    expect((await run(["init", "--watch"], dir)).stderr).toContain("--watch only applies to `proofline status`");
+    expect((await run(["init", "--only", "alpha"], dir)).stderr).toContain("--only only applies to `dayzero run`");
+    expect((await run(["init", "--watch"], dir)).stderr).toContain("--watch only applies to `dayzero status`");
   });
 });
 
@@ -152,7 +152,7 @@ describe("run and init together", () => {
     return { dir, github, agents };
   }
 
-  const NOT_LAUNCHED = "nothing was launched; run `proofline init` if you haven't, merge its PR, then run again";
+  const NOT_LAUNCHED = "nothing was launched; run `dayzero init` if you haven't, merge its PR, then run again";
 
   it("launches once init's PR is merged into main, and says so", async () => {
     const { dir, github, agents } = await withInit();
@@ -167,7 +167,7 @@ describe("run and init together", () => {
     const dir = await project();
     const { code, stderr, launcherCreated } = await run(["run"], dir);
     expect(code).toBe(1);
-    expect(stderr).toContain("error: no `proofline init` is recorded for acme/app. Agents start from main");
+    expect(stderr).toContain("error: no `dayzero init` is recorded for acme/app. Agents start from main");
     expect(stderr).toContain(NOT_LAUNCHED);
     expect(stderr).toContain("--skip-init-check");
     expect(launcherCreated).toBe(false);
@@ -211,7 +211,7 @@ describe("run and init together", () => {
     // The second init (also bc-fake-1 from a fresh fake launcher) is a different agent in practice; give it its own id.
     const saved = await state(dir);
     saved.launches[1]!.agentId = "bc-second";
-    await writeFile(join(dir, ".proofline", "run.json"), JSON.stringify(saved));
+    await writeFile(join(dir, ".dayzero", "run.json"), JSON.stringify(saved));
     agents.agents["bc-second"] = { state: "running" };
     const { code, launcher } = await run(["run"], dir, { github, agents });
     expect(code).toBe(0);
@@ -224,7 +224,7 @@ describe("run and init together", () => {
     await writeFile(join(dir, "tasks.yaml"), TASKS.replace("repo: acme/app", "repo: acme/other"));
     const { code, stderr } = await run(["run"], dir, { github, agents });
     expect(code).toBe(1);
-    expect(stderr).toContain("no `proofline init` is recorded for acme/other");
+    expect(stderr).toContain("no `dayzero init` is recorded for acme/other");
   });
 
   it("refuses without a GitHub token, or when GitHub rejects it", async () => {
@@ -288,7 +288,7 @@ describe("run and init together", () => {
 
   it("reserves the ticket id init", () => {
     const tasks = { repo: "a/b", tickets: [{ id: "init", type: "bug", title: "T", description: "D", done: "X" }] };
-    expect(() => validateTasks(tasks)).toThrow('tasks.yaml: ticket "init": field "id" "init" is reserved for `proofline init`');
+    expect(() => validateTasks(tasks)).toThrow('tasks.yaml: ticket "init": field "id" "init" is reserved for `dayzero init`');
   });
 });
 
@@ -311,7 +311,7 @@ describe("status with an init launch", () => {
     expect(pull.labels).toEqual([]);
     expect(github.writes.some((w) => w.includes("abel"))).toBe(false);
     expect(pull.body).toContain(PROMPT_START);
-    expect(pull.body).toContain("`proofline init`, agent [bc-fake-1]");
+    expect(pull.body).toContain("`dayzero init`, agent [bc-fake-1]");
     expect(pull.body).toContain(EXPECTED_PROMPT);
   });
 
@@ -337,9 +337,9 @@ describe("status with an init launch", () => {
       prompt: "p",
       ...extra,
     });
-    await mkdir(join(dir, ".proofline"));
+    await mkdir(join(dir, ".dayzero"));
     await writeFile(
-      join(dir, ".proofline", "run.json"),
+      join(dir, ".dayzero", "run.json"),
       JSON.stringify({ launches: [record("init", "bc-init", { kind: "init" }), record("alpha", "bc-alpha", { type: "feature" })] }),
     );
     const agents = new FakeAgents({

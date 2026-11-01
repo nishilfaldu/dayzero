@@ -8,7 +8,7 @@ import { PROMPT_END, PROMPT_START, TEST_FILES_MARKER, promptSection } from "../s
 import { NOW, TASKS, run, tempDir } from "./fake.js";
 import { FakeAgents, FakeGitHub } from "./fake-status.js";
 
-/** A record as `proofline run` writes it now; pass `type: null` for one from before types were recorded. */
+/** A record as `dayzero run` writes it now; pass `type: null` for one from before types were recorded. */
 function launch(
   ticketId: string,
   agentId: string,
@@ -32,14 +32,14 @@ const TYPES: Record<string, TicketType> = { alpha: "feature", beta: "security", 
 
 async function project(launches: LaunchRecord[], tasks = TASKS) {
   const dir = await tempDir({ "tasks.yaml": tasks });
-  await mkdir(join(dir, ".proofline"));
-  await writeFile(join(dir, ".proofline", "run.json"), JSON.stringify({ launches }));
+  await mkdir(join(dir, ".dayzero"));
+  await writeFile(join(dir, ".dayzero", "run.json"), JSON.stringify({ launches }));
   return dir;
 }
 
 const ALL = [launch("alpha", "bc-a"), launch("beta", "bc-b"), launch("gamma", "bc-g")];
 
-describe("proofline status table", () => {
+describe("dayzero status table", () => {
   it("shows ticket, type, agent state and PR, with each missing-PR case spelled out", async () => {
     const dir = await project([...ALL, launch("delta", "bc-d"), launch("eps", "bc-e")]);
     const github = new FakeGitHub();
@@ -198,7 +198,7 @@ describe("updating the PR", () => {
     expect(alphaPull.comments[0]!.body).toBe(
       [
         TEST_FILES_MARKER,
-        "**proofline:** this PR changes existing test files. The ticket said to leave existing tests alone unless it needed to change them, and to say why.",
+        "**dayzero:** this PR changes existing test files. The ticket said to leave existing tests alone unless it needed to change them, and to say why.",
         "",
         "- `tests/e2e/notes.test.ts` (edited)",
         "- `app/utils/misc.test.ts` (deleted)",
@@ -395,7 +395,7 @@ describe("--watch", () => {
     const agents = new FakeAgents({ "bc-a": { state: "running" }, "bc-b": { state: "running" } });
     const onSleep = (_ms: number, count: number) => {
       if (count === 1) {
-        writeFileSync(join(dir, ".proofline", "run.json"), JSON.stringify({ launches: [launch("alpha", "bc-a"), launch("beta", "bc-b")] }));
+        writeFileSync(join(dir, ".dayzero", "run.json"), JSON.stringify({ launches: [launch("alpha", "bc-a"), launch("beta", "bc-b")] }));
         agents.agents["bc-a"] = { state: "finished", finishedAt: LONG_AGO };
       }
       if (count === 2) agents.agents["bc-b"] = { state: "finished", finishedAt: LONG_AGO };
@@ -436,7 +436,7 @@ describe("--watch", () => {
     const dir = await project([]);
     const { code, stderr } = await run(["run", "--watch"], dir);
     expect(code).toBe(2);
-    expect(stderr).toContain("--watch only applies to `proofline status`");
+    expect(stderr).toContain("--watch only applies to `dayzero status`");
   });
 });
 
@@ -536,7 +536,7 @@ describe("auth", () => {
     const dir = await project([launch("alpha", "bc-a")]);
     const { code, stderr } = await run(["status", "--force"], dir);
     expect(code).toBe(2);
-    expect(stderr).toContain("--force only applies to `proofline run`");
+    expect(stderr).toContain("--force only applies to `dayzero run`");
   });
 });
 

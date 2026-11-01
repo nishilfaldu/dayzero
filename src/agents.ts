@@ -1,7 +1,7 @@
 export type AgentState = "running" | "finished" | "error" | "cancelled";
 
 export interface AgentSnapshot {
-  /** The agent's newest run, which may be a follow-up started outside proofline. */
+  /** The agent's newest run, which may be a follow-up started outside dayzero. */
   state: AgentState;
   /** Error text from the newest run, if it failed. */
   error?: string;

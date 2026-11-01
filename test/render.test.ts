@@ -109,7 +109,7 @@ describe("checkTemplate", () => {
   });
 
   it("is enforced by loadTemplate", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "proofline-"));
+    const dir = await mkdtemp(join(tmpdir(), "dayzero-"));
     await writeFile(join(dir, "ticket.md"), "hello {who}\n");
     await expect(loadTemplate(join(dir, "ticket.md"))).rejects.toBeInstanceOf(ConfigError);
   });

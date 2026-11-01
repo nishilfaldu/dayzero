@@ -108,19 +108,19 @@ describe("validateConfig", () => {
 
   it("names the field for an unknown ticket type in by_type", () => {
     expect(problemsOf(() => validateConfig({ repro, evidence: { by_type: { securty: ["x"] } } }))).toEqual([
-      expect.stringMatching(/^proofline\.yaml: field "evidence\.by_type\.securty" is not a ticket type/),
+      expect.stringMatching(/^dayzero\.yaml: field "evidence\.by_type\.securty" is not a ticket type/),
     ]);
   });
 
   it("names the field for a non-list or bad item", () => {
     expect(problemsOf(() => validateConfig({ repro, evidence: { always: "log", by_type: { bug: [""] } } }))).toEqual([
-      'proofline.yaml: field "evidence.always" must be a list of strings (got "log")',
-      'proofline.yaml: field "evidence.by_type.bug[0]" must be a non-empty string (got "")',
+      'dayzero.yaml: field "evidence.always" must be a list of strings (got "log")',
+      'dayzero.yaml: field "evidence.by_type.bug[0]" must be a non-empty string (got "")',
     ]);
   });
 
   it("requires evidence", () => {
-    expect(problemsOf(() => validateConfig({ repro }))).toEqual(['proofline.yaml: field "evidence" is required']);
+    expect(problemsOf(() => validateConfig({ repro }))).toEqual(['dayzero.yaml: field "evidence" is required']);
   });
 });
 
@@ -147,21 +147,21 @@ describe("validateConfig model", () => {
   });
 
   it("names the field for each kind of bad model", () => {
-    expect(problemsOf(() => validateConfig({ ...base, model: "" }))).toEqual(['proofline.yaml: field "model" must not be empty']);
+    expect(problemsOf(() => validateConfig({ ...base, model: "" }))).toEqual(['dayzero.yaml: field "model" must not be empty']);
     expect(problemsOf(() => validateConfig({ ...base, model: 5 }))).toEqual([
-      expect.stringMatching(/^proofline\.yaml: field "model" must be a model id or a mapping/),
+      expect.stringMatching(/^dayzero\.yaml: field "model" must be a model id or a mapping/),
     ]);
     expect(problemsOf(() => validateConfig({ ...base, model: { params: { effort: "low" } } }))).toEqual([
-      'proofline.yaml: field "model.id" is required',
+      'dayzero.yaml: field "model.id" is required',
     ]);
     expect(problemsOf(() => validateConfig({ ...base, model: { id: "m", effort: "low" } }))).toEqual([
-      expect.stringMatching(/^proofline\.yaml: field "model\.effort" is not recognised/),
+      expect.stringMatching(/^dayzero\.yaml: field "model\.effort" is not recognised/),
     ]);
     expect(problemsOf(() => validateConfig({ ...base, model: { id: "m", params: ["low"] } }))).toEqual([
-      expect.stringMatching(/^proofline\.yaml: field "model\.params" must be a mapping/),
+      expect.stringMatching(/^dayzero\.yaml: field "model\.params" must be a mapping/),
     ]);
     expect(problemsOf(() => validateConfig({ ...base, model: { id: "m", params: { effort: ["low"] } } }))).toEqual([
-      'proofline.yaml: field "model.params.effort" must be a string, number or true/false (got ["low"])',
+      'dayzero.yaml: field "model.params.effort" must be a string, number or true/false (got ["low"])',
     ]);
   });
 });
@@ -182,41 +182,41 @@ describe("validateConfig repro", () => {
 
   it("requires the repro section", () => {
     expect(problemsOf(() => validateConfig({ evidence }))).toEqual([
-      expect.stringMatching(/^proofline\.yaml: field "repro" is required/),
+      expect.stringMatching(/^dayzero\.yaml: field "repro" is required/),
     ]);
   });
 
   it("requires a default line, even when there are overrides", () => {
     expect(problemsOf(() => validateConfig({ evidence, repro: { feature: "write the e2e test first." } }))).toEqual([
-      'proofline.yaml: field "repro.default" is required',
+      'dayzero.yaml: field "repro.default" is required',
     ]);
   });
 
   it("rejects an empty or non-string default", () => {
     expect(problemsOf(() => validateConfig({ evidence, repro: { default: " " } }))).toEqual([
-      'proofline.yaml: field "repro.default" must not be empty',
+      'dayzero.yaml: field "repro.default" must not be empty',
     ]);
     expect(problemsOf(() => validateConfig({ evidence, repro: { default: ["a"] } }))).toEqual([
-      'proofline.yaml: field "repro.default" must be a string (got ["a"])',
+      'dayzero.yaml: field "repro.default" must be a string (got ["a"])',
     ]);
   });
 
   it("rejects an override for a type that doesn't exist", () => {
     expect(problemsOf(() => validateConfig({ evidence, repro: { default: "d", feat: "x" } }))).toEqual([
-      expect.stringMatching(/^proofline\.yaml: field "repro\.feat" is not a ticket type/),
+      expect.stringMatching(/^dayzero\.yaml: field "repro\.feat" is not a ticket type/),
     ]);
   });
 
   it("rejects an empty or non-string override", () => {
     expect(problemsOf(() => validateConfig({ evidence, repro: { default: "d", bug: "", perf: 3 } }))).toEqual([
-      'proofline.yaml: field "repro.bug" must not be empty',
-      'proofline.yaml: field "repro.perf" must be a string (got 3)',
+      'dayzero.yaml: field "repro.bug" must not be empty',
+      'dayzero.yaml: field "repro.perf" must be a string (got 3)',
     ]);
   });
 
   it("rejects a repro that isn't a mapping", () => {
     expect(problemsOf(() => validateConfig({ evidence, repro: "repro first." }))).toEqual([
-      expect.stringMatching(/^proofline\.yaml: field "repro" must be a mapping/),
+      expect.stringMatching(/^dayzero\.yaml: field "repro" must be a mapping/),
     ]);
   });
 });

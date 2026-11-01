@@ -1,11 +1,11 @@
 {
-  "name": "proofline",
+  "name": "dayzero",
   "version": "0.1.0",
   "description": "Start one Cursor cloud agent per ticket; each agent opens a PR that carries its own evidence.",
   "private": true,
   "type": "module",
   "bin": {
-    "proofline": "dist/bin.js"
+    "dayzero": "dist/bin.js"
   },
   "files": [
     "dist",
@@ -16,7 +16,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "proofline": "tsx src/bin.ts",
+    "dayzero": "tsx src/bin.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

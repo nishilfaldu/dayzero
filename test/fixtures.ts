@@ -1,4 +1,4 @@
-import type { ProoflineConfig, Ticket } from "../src/types.js";
+import type { DayzeroConfig, Ticket } from "../src/types.js";
 
 export function ticket(overrides: Partial<Ticket> = {}): Ticket {
   return {
@@ -15,7 +15,7 @@ export const DEFAULT_REPRO = "repro it on main first; if it doesn't repro, stop 
 export const FEATURE_REPRO = "write the failing e2e test first.";
 export const PERF_REPRO = "benchmark main first.";
 
-export const config: ProoflineConfig = {
+export const config: DayzeroConfig = {
   repro: {
     default: DEFAULT_REPRO,
     overrides: { feature: FEATURE_REPRO, perf: PERF_REPRO },

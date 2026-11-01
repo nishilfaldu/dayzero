@@ -27,9 +27,9 @@ export interface TicketStatus {
   problems: string[];
 }
 
-export const PROMPT_START = "<!-- proofline:prompt -->";
-export const PROMPT_END = "<!-- /proofline:prompt -->";
-export const TEST_FILES_MARKER = "<!-- proofline:test-files -->";
+export const PROMPT_START = "<!-- dayzero:prompt -->";
+export const PROMPT_END = "<!-- /dayzero:prompt -->";
+export const TEST_FILES_MARKER = "<!-- dayzero:test-files -->";
 const LABEL_COLOR = "ededed";
 
 /** The newest launch per ticket, in the order tickets were first launched. */
@@ -251,9 +251,9 @@ export function promptSection(launch: LaunchRecord): string {
   const fence = "`".repeat(Math.max(3, longestBacktickRun(launch.prompt) + 1));
   return [
     PROMPT_START,
-    "### Prompt sent by proofline",
+    "### Prompt sent by dayzero",
     "",
-    `${launch.kind === "init" ? "`proofline init`" : `Ticket \`${launch.ticketId}\``}, agent [${launch.agentId}](${launch.agentUrl}), launched ${launch.launchedAt}:`,
+    `${launch.kind === "init" ? "`dayzero init`" : `Ticket \`${launch.ticketId}\``}, agent [${launch.agentId}](${launch.agentUrl}), launched ${launch.launchedAt}:`,
     "",
     `${fence}text`,
     launch.prompt,
@@ -262,7 +262,7 @@ export function promptSection(launch: LaunchRecord): string {
   ].join("\n");
 }
 
-/** Replaces proofline's section if the body has one, else appends it. Never adds a second copy. */
+/** Replaces dayzero's section if the body has one, else appends it. Never adds a second copy. */
 export function upsertPromptSection(body: string, section: string): string {
   const text = normalize(body);
   const start = text.indexOf(PROMPT_START);
@@ -295,7 +295,7 @@ export function testFilesComment(files: PullFile[]): string {
   });
   return [
     TEST_FILES_MARKER,
-    "**proofline:** this PR changes existing test files. The ticket said to leave existing tests alone unless it needed to change them, and to say why.",
+    "**dayzero:** this PR changes existing test files. The ticket said to leave existing tests alone unless it needed to change them, and to say why.",
     "",
     ...lines,
   ].join("\n");

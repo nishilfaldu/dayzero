@@ -1,27 +1,27 @@
-# proofline
+# dayzero
 
-Write tickets in `tasks.yaml`; proofline starts one Cursor cloud agent per ticket, and each agent opens a PR on the target repo that carries its own evidence.
+Write tickets in `tasks.yaml`; dayzero starts one Cursor cloud agent per ticket, and each agent opens a PR on the target repo that carries its own evidence.
 
-So far proofline sets the target repo up for agents, validates the config, renders each ticket's prompt, launches the agents, and tracks them to their PRs. Verifying the PRs comes later.
+So far dayzero sets the target repo up for agents, validates the config, renders each ticket's prompt, launches the agents, and tracks them to their PRs. Verifying the PRs comes later.
 
 Requires Node 22.13 or later, which `@cursor/sdk` needs.
 
 ```sh
 npm install
-npm run proofline -- init --dry-run       # print the setup prompt; no API key, no network
-npm run proofline -- init                 # launch the one setup agent on the repo
-npm run proofline -- status --watch       # follow it to its PR; then review and merge that PR
-npm run proofline -- run --dry-run        # print every prompt; no API key, no network
-npm run proofline -- run                  # once init's PR is merged: an agent per ticket not yet launched
-npm run proofline -- status               # agent state + PR per ticket; labels and annotates PRs
-npm run proofline -- status --watch       # same, every 60s until nothing is pending
+npm run dayzero -- init --dry-run       # print the setup prompt; no API key, no network
+npm run dayzero -- init                 # launch the one setup agent on the repo
+npm run dayzero -- status --watch       # follow it to its PR; then review and merge that PR
+npm run dayzero -- run --dry-run        # print every prompt; no API key, no network
+npm run dayzero -- run                  # once init's PR is merged: an agent per ticket not yet launched
+npm run dayzero -- status               # agent state + PR per ticket; labels and annotates PRs
+npm run dayzero -- status --watch       # same, every 60s until nothing is pending
 npm run build && node dist/bin.js run     # same, from the build
 npm test                                  # uses a fake Cursor client; no network
 ```
 
 ## Init
 
-`proofline init` launches one cloud agent that sets the target repo up so later agents can take tickets and prove their work. It works the same way as `run`: the `tasks.yaml` repo, `main`, the `proofline.yaml` model, and `CURSOR_API_KEY`.
+`dayzero init` launches one cloud agent that sets the target repo up so later agents can take tickets and prove their work. It works the same way as `run`: the `tasks.yaml` repo, `main`, the `dayzero.yaml` model, and `CURSOR_API_KEY`.
 
 **The prompt** is [prompts/init.md](prompts/init.md), with `{repo}` filled in; no other placeholder is allowed. It asks for one PR adding:
 - pstack, pinned
@@ -29,7 +29,7 @@ npm test                                  # uses a fake Cursor client; no networ
 - AGENTS.md with commands that were actually run
 - a cloud environment setup
 
-**Recording:** the launch goes in `.proofline/run.json` with `ticketId: "init"` and `kind: "init"`, and no type. `status` and `status --watch` show it as its own `init` row with type `-`. Its PR gets the prompt section but no label. `init` is reserved, so no ticket can use that id.
+**Recording:** the launch goes in `.dayzero/run.json` with `ticketId: "init"` and `kind: "init"`, and no type. `status` and `status --watch` show it as its own `init` row with type `-`. Its PR gets the prompt section but no label. `init` is reserved, so no ticket can use that id.
 
 - **`--dry-run`** prints the prompt and launches nothing.
 - **Running `init` again** refuses while an init is recorded, and names the existing agent. **`--force`** launches another one; the earlier record is kept.
@@ -45,22 +45,22 @@ So the order is: `init`, `status --watch` until its PR is up, review and merge t
 
 ## Launching
 
-`proofline run` starts one Cursor cloud agent per ticket using `@cursor/sdk`:
+`dayzero run` starts one Cursor cloud agent per ticket using `@cursor/sdk`:
 - **Where:** on `https://github.com/<repo>`, starting from `main`.
 - **Prompt:** the ticket's rendered prompt.
 - **PR:** `autoCreatePR` is on.
 
-proofline returns as soon as each agent's first run is accepted. It doesn't wait for the agent to finish.
+dayzero returns as soon as each agent's first run is accepted. It doesn't wait for the agent to finish.
 
-Each successful launch is appended to `.proofline/run.json` (gitignored) before the next one starts. A record holds the ticket id and type, agent id, agent URL, run id, launch time, repo, model, and the exact prompt sent.
+Each successful launch is appended to `.dayzero/run.json` (gitignored) before the next one starts. A record holds the ticket id and type, agent id, agent URL, run id, launch time, repo, model, and the exact prompt sent.
 
 - **Rerunning** skips tickets that already have a record.
 - **`--only <id>`** (repeatable) launches just those tickets, even if they were launched before.
 - **`--force`** relaunches every ticket. Relaunches add new records; old ones are kept.
 - **A failed launch** doesn't stop the others. It is listed with its reason, isn't recorded, and is retried on the next plain `run`.
-- **`CURSOR_API_KEY`** comes from the environment, or else from `.env.local`. If neither has it, proofline fails before launching anything. No key is needed when there's nothing to launch.
+- **`CURSOR_API_KEY`** comes from the environment, or else from `.env.local`. If neither has it, dayzero fails before launching anything. No key is needed when there's nothing to launch.
 - **The init check** needs a GitHub token from `gh auth token`, like `status` (see Auth below), unless `--skip-init-check` is passed.
-- **`--dry-run`** prints prompts exactly as before. It never reads `.proofline/` or the key. `--only` narrows which prompts it prints.
+- **`--dry-run`** prints prompts exactly as before. It never reads `.dayzero/` or the key. `--only` narrows which prompts it prints.
 
 Exit codes:
 - **0:** everything launched, or nothing needed to.
@@ -69,7 +69,7 @@ Exit codes:
 
 ## Status
 
-`proofline status` reads `.proofline/run.json` and checks each ticket's latest launch. It prints a table:
+`dayzero status` reads `.dayzero/run.json` and checks each ticket's latest launch. It prints a table:
 
 ```
 TICKET            TYPE         AGENT     PR
@@ -85,7 +85,7 @@ reset-code-race   concurrency  error     branch cursor/reset-race-9f8e never rea
 
 **The PR is found** in one of two ways, and GitHub is always asked to confirm it:
 - **From Cursor's `prUrl`:** used only if GitHub has that PR, opened against the tasks repo, from the agent's branch.
-- **From the branch:** otherwise proofline looks up a PR from the branch, preferring an open one.
+- **From the branch:** otherwise dayzero looks up a PR from the branch, preferring an open one.
 
 If there's no PR, the PR column says why:
 - the branch is pushed but has no PR yet
@@ -95,8 +95,8 @@ If there's no PR, the PR column says why:
 
 Once a PR is confirmed, `status` brings it up to date. Running it again changes nothing:
 - **Label:** the ticket type. It's created in the repo if missing, and isn't re-added if already there.
-- **Description:** a "Prompt sent by proofline" section with the exact prompt is appended, between `<!-- proofline:prompt -->` markers. A later run only replaces that section, and only if it differs.
-- **Test files:** if the PR edits, deletes or renames existing test files, one comment lists them. It's marked `<!-- proofline:test-files -->` and updated in place if the list changes. New test files don't count.
+- **Description:** a "Prompt sent by dayzero" section with the exact prompt is appended, between `<!-- dayzero:prompt -->` markers. A later run only replaces that section, and only if it differs.
+- **Test files:** if the PR edits, deletes or renames existing test files, one comment lists them. It's marked `<!-- dayzero:test-files -->` and updated in place if the list changes. New test files don't count.
   - A test file is anything under `test/`, `tests/`, `__tests__/`, `spec/`, `specs/`, `e2e/` or `__snapshots__/`.
   - It's also any file named like `*.test.*`, `*.spec.*`, `*_test.*` or `test_*`.
 
@@ -120,12 +120,12 @@ Cancelled and unknown agents aren't waited on. Plain `status` never waits.
 ## Inputs
 
 - `tasks.yaml`: `repo` plus `tickets`, each with `id`, `type`, `title`, `description` and `done`, and optionally `evidence`. Any other key is an error, and the id `init` is reserved. `type` is one of feature, bug, concurrency, perf, migration or security.
-- `proofline.yaml`:
+- `dayzero.yaml`:
   - `model` (optional): a model id such as `composer-2.5`, or `{id: grok-4.5, params: {effort: low}}`. Without it, the SDK uses your account's default model.
   - `repro.default` (required): the repro line.
   - Optional `repro.<type>` lines that override the default for that ticket type.
   - `evidence.always` (list) and `evidence.by_type` (type → list).
-- `prompts/init.md`: the `proofline init` prompt; only `{repo}` is filled in.
+- `prompts/init.md`: the `dayzero init` prompt; only `{repo}` is filled in.
 - `prompts/ticket.md`: the ticket prompt template, with `{type} {title} {description} {repro} {done} {evidence} {repo}` placeholders. `{repro}` is required.
 
 A ticket's `{repro}` is its type's override if there is one, otherwise `repro.default`. The shipped config overrides `feature`, with "write the failing e2e test first.", and `migration`, with "record the current versions and a passing test run on main first." A ticket's evidence is `always` + `by_type[type]` + its own `evidence`, with duplicates removed.

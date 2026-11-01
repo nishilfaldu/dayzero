@@ -11,11 +11,11 @@ const run: typeof runCli = (argv, cwd, options) =>
   runCli(argv[0] === "run" ? [...argv, "--skip-init-check"] : argv, cwd, options);
 
 async function project(files: Record<string, string> = {}) {
-  return tempDir({ "tasks.yaml": TASKS, "proofline.yaml": CONFIG, ...files });
+  return tempDir({ "tasks.yaml": TASKS, "dayzero.yaml": CONFIG, ...files });
 }
 
 async function state(dir: string): Promise<RunState> {
-  return JSON.parse(await readFile(join(dir, ".proofline", "run.json"), "utf8"));
+  return JSON.parse(await readFile(join(dir, ".dayzero", "run.json"), "utf8"));
 }
 
 async function dryRunPrompts(dir: string): Promise<Record<string, string>> {
@@ -28,7 +28,7 @@ async function dryRunPrompts(dir: string): Promise<Record<string, string>> {
   return prompts;
 }
 
-describe("proofline run", () => {
+describe("dayzero run", () => {
   it("launches one agent per ticket on the tasks.yaml repo from main, with the rendered prompt", async () => {
     const dir = await project();
     const { code, launcher } = await run(["run"], dir);
@@ -42,7 +42,7 @@ describe("proofline run", () => {
     expect(launcher.apiKeys).toEqual(["test-key"]);
   });
 
-  it("records ticket id, type, agent id, agent url, launch time and the exact prompt in .proofline/run.json", async () => {
+  it("records ticket id, type, agent id, agent url, launch time and the exact prompt in .dayzero/run.json", async () => {
     const dir = await project();
     await run(["run"], dir);
     const prompts = await dryRunPrompts(dir);
@@ -68,7 +68,7 @@ describe("proofline run", () => {
     const seenBySecondLaunch: string[] = [];
     const launcher = new FakeLauncher((request) => {
       if (request.prompt.includes("Fix beta")) {
-        const saved: RunState = JSON.parse(readFileSync(join(dir, ".proofline", "run.json"), "utf8"));
+        const saved: RunState = JSON.parse(readFileSync(join(dir, ".dayzero", "run.json"), "utf8"));
         seenBySecondLaunch.push(...saved.launches.map((l) => l.ticketId));
       }
       return undefined;
@@ -82,7 +82,7 @@ describe("proofline run", () => {
     const { stdout } = await run(["run"], dir);
     expect(stdout).toContain("launching 3 agent(s) on acme/app from main with the SDK default model");
     expect(stdout).toContain("launched alpha: https://cursor.com/agents/bc-fake-1");
-    expect(stdout).toContain("launched 3 of 3; recorded in .proofline/run.json");
+    expect(stdout).toContain("launched 3 of 3; recorded in .dayzero/run.json");
   });
 });
 
@@ -145,13 +145,13 @@ describe("rerunning", () => {
 
   it("refuses to launch over a corrupt run.json", async () => {
     const dir = await project();
-    await mkdir(join(dir, ".proofline"));
-    await writeFile(join(dir, ".proofline", "run.json"), "{ not json");
+    await mkdir(join(dir, ".dayzero"));
+    await writeFile(join(dir, ".dayzero", "run.json"), "{ not json");
     const { code, stderr, launcherCreated } = await run(["run"], dir);
     expect(code).toBe(1);
-    expect(stderr).toMatch(/error: \.proofline\/run\.json: not valid JSON/);
+    expect(stderr).toMatch(/error: \.dayzero\/run\.json: not valid JSON/);
     expect(launcherCreated).toBe(false);
-    expect(await readFile(join(dir, ".proofline", "run.json"), "utf8")).toBe("{ not json");
+    expect(await readFile(join(dir, ".dayzero", "run.json"), "utf8")).toBe("{ not json");
   });
 });
 
@@ -196,7 +196,7 @@ describe("failures", () => {
     expect(code).toBe(1);
     expect(stdout).toContain("  alpha: socket hang up\n");
     expect(stdout).toContain("launched 0 of 1\n");
-    await expect(readFile(join(dir, ".proofline", "run.json"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(dir, ".dayzero", "run.json"), "utf8")).rejects.toThrow();
   });
 
   it("leaves out error codes that add nothing", () => {
@@ -208,8 +208,8 @@ describe("failures", () => {
 });
 
 describe("model", () => {
-  it("passes the proofline.yaml model, with params, and records its id", async () => {
-    const dir = await project({ "proofline.yaml": `model: {id: grok-4.5, params: {effort: low, fast: false}}\n${CONFIG}` });
+  it("passes the dayzero.yaml model, with params, and records its id", async () => {
+    const dir = await project({ "dayzero.yaml": `model: {id: grok-4.5, params: {effort: low, fast: false}}\n${CONFIG}` });
     const { stdout, launcher } = await run(["run", "--only", "alpha"], dir);
     expect(launcher.requests[0]!.model).toEqual({
       id: "grok-4.5",
@@ -223,12 +223,12 @@ describe("model", () => {
   });
 
   it("accepts a bare model id", async () => {
-    const dir = await project({ "proofline.yaml": `model: composer-2.5\n${CONFIG}` });
+    const dir = await project({ "dayzero.yaml": `model: composer-2.5\n${CONFIG}` });
     const { launcher } = await run(["run", "--only", "alpha"], dir);
     expect(launcher.requests[0]!.model).toEqual({ id: "composer-2.5", params: [] });
   });
 
-  it("sends no model when proofline.yaml has none, so the SDK default applies", async () => {
+  it("sends no model when dayzero.yaml has none, so the SDK default applies", async () => {
     const dir = await project();
     const { launcher } = await run(["run", "--only", "alpha"], dir);
     expect(launcher.requests[0]).not.toHaveProperty("model");
@@ -243,7 +243,7 @@ describe("API key", () => {
     expect(stderr.endsWith("error: CURSOR_API_KEY is not set in the environment or in .env.local; nothing was launched\n")).toBe(true);
     expect(stderr.split("\n").filter((line) => line.startsWith("error:"))).toHaveLength(1);
     expect(launcherCreated).toBe(false);
-    await expect(readFile(join(dir, ".proofline", "run.json"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(dir, ".dayzero", "run.json"), "utf8")).rejects.toThrow();
   });
 
   it("treats an empty key as missing", async () => {

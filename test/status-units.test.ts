@@ -142,7 +142,7 @@ describe("resolveGitHubToken", () => {
 describe("runGhAuthToken", () => {
   // A stand-in `gh` on PATH that reports which token it would have used.
   async function withFakeGh<T>(fn: () => Promise<T>): Promise<T> {
-    const dir = await mkdtemp(join(tmpdir(), "proofline-gh-"));
+    const dir = await mkdtemp(join(tmpdir(), "dayzero-gh-"));
     const gh = join(dir, "gh");
     await writeFile(gh, '#!/bin/sh\necho "${GH_TOKEN:-${GITHUB_TOKEN:-stored-login-token}}"\n');
     await chmod(gh, 0o755);

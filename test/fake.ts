@@ -86,7 +86,7 @@ export async function run(argv: string[], cwd: string, options: RunOptions = {})
 }
 
 export async function tempDir(files: Record<string, string>) {
-  const dir = await mkdtemp(join(tmpdir(), "proofline-"));
+  const dir = await mkdtemp(join(tmpdir(), "dayzero-"));
   for (const [name, text] of Object.entries(files)) await writeFile(join(dir, name), text);
   return dir;
 }
