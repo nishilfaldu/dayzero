@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { type AgentReader, createCursorReader } from "./agents.js";
 import { ConfigError, loadConfig, loadTasks } from "./config.js";
+import { type DoctorDeps, processDoctorDeps, runChecks } from "./doctor.js";
 import { API_KEY_VAR, resolveApiKey } from "./env.js";
 import {
   type GitHub,
@@ -15,6 +16,7 @@ import { INIT_ID, checkInitMerged, loadInitTemplate, renderInitPrompt } from "./
 import { describeError, launchAgents, selectTickets, ticketItems } from "./launch.js";
 import { type Launcher, createCursorLauncher } from "./launcher.js";
 import { loadTemplate, renderAll, type RenderedPrompt } from "./render.js";
+import { IGNORED, scaffold } from "./scaffold.js";
 import { type RunState, STATE_PATH, initLaunches, readState, writeState } from "./state.js";
 import {
   ERROR_GRACE_MS,
@@ -30,10 +32,17 @@ import type { DayzeroConfig, Tasks } from "./types.js";
 
 export const WATCH_INTERVAL_MS = 60_000;
 
-export const USAGE = `usage: dayzero init [--dry-run] [--force] [--tasks <file>] [--config <file>]
+export const USAGE = `usage: dayzero new [--force]
+       dayzero doctor [--tasks <file>] [--config <file>]
+       dayzero init [--dry-run] [--force] [--tasks <file>] [--config <file>]
        dayzero run [--dry-run] [--only <id>]... [--force] [--skip-init-check] [--tasks <file>] [--config <file>]
        dayzero status [--watch] [--tasks <file>]
 
+new      Writes starter tasks.yaml and dayzero.yaml here, with the repo taken from
+         the git origin when it is on GitHub, and adds ${IGNORED.join(" and ")} to
+         .gitignore. Keeps existing files unless --force.
+doctor   Checks Node, both files, the GitHub token and repo, ${API_KEY_VAR}, and that
+         Cursor can reach the repo. Exits 1 if anything fails.
 init     Starts one cloud agent on the tasks.yaml repo, from main, with prompts/init.md:
          it sets the repo up (pstack, verification skills, AGENTS.md, cloud
          environment) in one PR. Recorded in ${STATE_PATH} as "${INIT_ID}"; refuses to
@@ -51,7 +60,8 @@ status   For each ticket's latest launch, and init's, shows the agent's state an
 options:
   --dry-run         print the exact prompt(s); launch nothing, need no API key
   --only <id>       run: launch just this ticket, even if it was launched before (repeatable)
-  --force           run: relaunch every ticket; init: launch even if one is recorded
+  --force           run: relaunch every ticket; init: launch even if one is recorded;
+                    new: overwrite existing tasks.yaml and dayzero.yaml
   --skip-init-check run: launch without checking that init's PR is merged into main
   --watch           status: re-check every ${WATCH_INTERVAL_MS / 1000}s until no agent is running, each
                     finished one has a PR or finished ${PR_GRACE_MS / 60_000}+ min ago, and each one
@@ -105,6 +115,18 @@ export async function main(argv: string[], io: Io = processIo): Promise<number> 
     return 0;
   }
   const command = positionals.length === 1 ? positionals[0] : undefined;
+  if (command === "new" || command === "doctor") {
+    const allowed = command === "new" ? ["force"] : ["tasks", "config"];
+    const extra = (["dry-run", "only", "force", "skip-init-check", "watch", "tasks", "config"] as const).filter(
+      (flag) => values[flag] !== undefined && !allowed.includes(flag),
+    );
+    if (extra.length > 0) {
+      io.stderr(`error: ${extra.map((f) => `--${f}`).join(", ")} doesn't apply to \`dayzero ${command}\`\n\n${USAGE}\n`);
+      return 2;
+    }
+    if (command === "new") return newProject(values.force ?? false, io);
+    return doctor(values.tasks ?? "tasks.yaml", values.config ?? "dayzero.yaml", io);
+  }
   if (command === "status") {
     const runOnly = (["dry-run", "only", "force", "skip-init-check", "config"] as const).filter((flag) => values[flag] !== undefined);
     if (runOnly.length > 0) {
@@ -407,6 +429,40 @@ function table(rows: string[][]): string {
     .map((row) => row.map((cell, col) => (col === row.length - 1 ? cell : cell.padEnd(widths[col]!))).join("  "))
     .join("\n")
     .concat("\n");
+}
+
+async function newProject(force: boolean, io: Io, detectRepo?: (cwd: string) => Promise<string | undefined>): Promise<number> {
+  const result = await scaffold(io.cwd, force, detectRepo);
+  for (const name of result.written) io.stdout(`wrote ${name}\n`);
+  for (const name of result.kept) io.stdout(`kept ${name} (already here; --force overwrites it)\n`);
+  if (result.ignored.length > 0) io.stdout(`added ${result.ignored.join(", ")} to .gitignore\n`);
+  if (result.written.includes("tasks.yaml")) {
+    io.stdout(
+      result.repo
+        ? `repo: ${result.repo} (from git origin)\n`
+        : `repo: set it in tasks.yaml; no GitHub origin was found here\n`,
+    );
+  }
+  io.stdout(`next: write your tickets in tasks.yaml, add ${API_KEY_VAR} to .env.local, then run \`dayzero doctor\`\n`);
+  return 0;
+}
+
+async function doctor(tasksLabel: string, configLabel: string, io: Io, deps: DoctorDeps = processDoctorDeps): Promise<number> {
+  const checks = await runChecks(
+    io.cwd,
+    io.env,
+    resolve(io.cwd, tasksLabel),
+    tasksLabel,
+    resolve(io.cwd, configLabel),
+    configLabel,
+    { ...deps, ghAuthToken: io.ghAuthToken },
+  );
+  for (const check of checks) {
+    io.stdout(`${check.ok ? "ok  " : "FAIL"}  ${check.label}${check.fix ? `\n      ${check.fix}` : ""}\n`);
+  }
+  const failed = checks.filter((c) => !c.ok).length;
+  io.stdout(failed === 0 ? "ready: run `dayzero init`\n" : `${failed} check(s) failed\n`);
+  return failed === 0 ? 0 : 1;
 }
 
 function reportConfigError(err: unknown, io: Io): number {

@@ -1,0 +1,13 @@
+# The GitHub repo the cloud agents work on (owner/name).
+repo: OWNER/REPO
+
+# One cloud agent per ticket. Write each ticket the way a user would file it.
+# type: feature, bug, concurrency, perf, migration or security
+tickets:
+  - id: example-bug
+    type: bug
+    title: Describe what the user saw
+    description: >-
+      What happened, where, and what should have happened instead.
+    done: >-
+      a check anyone can run that passes only once the bug is fixed

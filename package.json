@@ -2,6 +2,16 @@
   "name": "dayzero",
   "version": "0.1.0",
   "description": "Start one Cursor cloud agent per ticket; each agent opens a PR that carries its own evidence.",
+  "license": "MIT",
+  "author": "Nishil Faldu",
+  "homepage": "https://github.com/nishilfaldu/dayzero#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nishilfaldu/dayzero.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nishilfaldu/dayzero/issues"
+  },
   "private": true,
   "type": "module",
   "bin": {
@@ -9,13 +19,15 @@
   },
   "files": [
     "dist",
-    "prompts"
+    "prompts",
+    "templates"
   ],
   "engines": {
     "node": ">=22.13"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
     "dayzero": "tsx src/bin.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

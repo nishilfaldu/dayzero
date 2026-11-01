@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { CONFIG, TASKS, run as runIn, tempDir } from "./fake.js";
 
-const root = fileURLToPath(new URL("..", import.meta.url));
+const root = fileURLToPath(new URL("../examples/epic-stack", import.meta.url));
 
 const run = (argv: string[], cwd = root) => runIn(argv, cwd);
 
@@ -109,7 +109,7 @@ describe("dayzero run --dry-run", () => {
 
   it("names an unknown command, or extra ones, before the usage", async () => {
     const unknown = await run(["launch"]);
-    expect(unknown.stderr.startsWith('error: unknown command "launch"\n\nusage: dayzero init')).toBe(true);
+    expect(unknown.stderr.startsWith('error: unknown command "launch"\n\nusage: dayzero new')).toBe(true);
     const extra = await run(["run", "now"]);
     expect(extra.code).toBe(2);
     expect(extra.stderr.startsWith("error: expected one command, got 2: run now\n\nusage:")).toBe(true);

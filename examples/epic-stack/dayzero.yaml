@@ -1,0 +1,24 @@
+repro:
+  default: "repro it on main first; if it doesn't repro, stop and say so."
+  feature: "write the failing e2e test first."
+  migration: "record the current versions and a passing test run on main first."
+
+evidence:
+  always:
+    - the committed decision log
+    - test run output from before and after the change
+
+  by_type:
+    feature:
+      - an e2e test that fails on main and passes on the branch
+    bug:
+      - failing test on main, passing on the branch
+    concurrency:
+      - a stress run that shows the race on main and not on the branch
+    perf:
+      - benchmark numbers for main vs the branch
+    migration:
+      - the migration applied and rolled back against seed data
+    security:
+      - failing test on main, passing on the branch
+      - the exploit working on main and rejected on the branch
